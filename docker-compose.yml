@@ -16,6 +16,13 @@ services:
       Redis__ConnectionString: "redis:6379"
       Jwt__Key: "${JWT_KEY}"
       Jwt__Issuer: "${JWT_ISSUER}"
+      OTEL_SERVICE_NAME: "jeeb-gateway"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}"
+      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=${ENVIRONMENT:-development},service.namespace=jeeb"
+      SENTRY__DSN: "${SENTRY_DSN:-}"
+      SENTRY__ENVIRONMENT: "${ENVIRONMENT:-development}"
+      SENTRY__TRACES_SAMPLE_RATE: "${SENTRY_TRACES_SAMPLE_RATE:-0.1}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,8 +53,9 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
-    command: redis-server --save 60 1 --loglevel warning
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

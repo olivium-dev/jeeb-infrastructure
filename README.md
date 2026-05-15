@@ -23,7 +23,7 @@ curl http://localhost:5000/health/live
 | -------------- | ---------------------- | ---- | -------------------------- |
 | jeeb-gateway   | Built from ../jeeb-gateway | 5000 | BFF gateway (ASP.NET Core) |
 | postgres       | postgres:16-alpine     | 5432 | Primary database           |
-| redis          | redis:7-alpine         | 6379 | Cache / session store      |
+| redis          | redis:7-alpine         | 6379 | Geo / pub-sub / cache / rate-limit (see [`redis/`](./redis/)) |
 
 ## Staging
 
@@ -54,6 +54,10 @@ jeeb-infrastructure/
 ├── deploy/
 │   ├── staging-deploy.sh         # SSH-based staging deploy
 │   └── rollback.sh               # Rollback to a previous tag
+├── redis/
+│   ├── redis.conf                # Geo / pub-sub / cache / rate-limit config
+│   ├── smoke-test.sh             # Validates Redis workloads post-up
+│   └── README.md                 # Workload contract + ops notes
 ├── .github/
 │   ├── workflows/
 │   │   └── deploy-staging.yml    # CI: deploy on merge to main

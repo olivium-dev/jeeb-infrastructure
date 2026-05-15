@@ -33,6 +33,14 @@ services:
 
   redis:
     restart: unless-stopped
+    # Inherit redis.conf mount from docker-compose.yml; override maxmemory to
+    # match the container memory limit so the OOM-killer doesn't race the
+    # eviction loop on staging.
+    command:
+      - "redis-server"
+      - "/usr/local/etc/redis/redis.conf"
+      - "--maxmemory"
+      - "200mb"
     deploy:
       resources:
         limits:

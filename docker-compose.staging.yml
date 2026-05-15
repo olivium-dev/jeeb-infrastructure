@@ -1,0 +1,40 @@
+# jeeb-infrastructure — staging overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+
+version: "3.9"
+
+services:
+  jeeb-gateway:
+    build: !reset null
+    image: "${REGISTRY}/jeeb-gateway:${IMAGE_TAG:-latest}"
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Staging
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  postgres:
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  redis:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M

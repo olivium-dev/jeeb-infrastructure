@@ -2,7 +2,13 @@ name: Deploy to Staging
 
 on:
   push:
-    branches: [main]
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (defaults to commit SHA)"
+        required: false
+        type: string
 
 concurrency:
   group: deploy-staging
@@ -10,13 +16,15 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io/olivium-dev
-  IMAGE_TAG: ${{ github.sha }}
+  IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
 
 jobs:
   deploy:
     name: Deploy jeeb-gateway to staging
     runs-on: ubuntu-22.04
-    environment: staging
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
 
     permissions:
       contents: read
@@ -26,28 +34,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.STAGING_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${DEPLOY_SSH_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+
       - name: Deploy to staging
         env:
           DEPLOY_HOST: ${{ secrets.STAGING_HOST }}
           DEPLOY_USER: ${{ secrets.STAGING_USER }}
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          GATEWAY_DOMAIN: ${{ secrets.STAGING_DOMAIN }}
         run: |
           chmod +x deploy/staging-deploy.sh
           ./deploy/staging-deploy.sh
 
       - name: Verify deployment
         env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
         run: |
-          echo "Verifying deployment at ${STAGING_URL}/health/live..."
-          for i in {1..10}; do
-            if curl -sf "${STAGING_URL}/health/live" > /dev/null 2>&1; then
-              echo "Health check passed"
+          echo "Verifying ${STAGING_URL}/health/live"
+          for i in {1..20}; do
+            if curl -sf --max-time 5 "${STAGING_URL}/health/live" > /dev/null; then
+              echo "Health check passed (attempt ${i})"
               exit 0
             fi
-            echo "Attempt $i/10 — waiting 5s..."
+            echo "Attempt ${i}/20 — waiting 5s"
             sleep 5
           done
-          echo "Health check failed after 10 attempts"
+          echo "Health check failed after 20 attempts"
           exit 1

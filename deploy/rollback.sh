@@ -8,8 +8,6 @@ set -euo pipefail
 # Example: ./deploy/rollback.sh v1.2.3
 # ──────────────────────────────────────────────
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 : "${DEPLOY_HOST:?DEPLOY_HOST is required}"
 : "${DEPLOY_USER:?DEPLOY_USER is required}"
 : "${REGISTRY:?REGISTRY is required}"
@@ -18,6 +16,7 @@ ROLLBACK_TAG="${1:?Usage: rollback.sh <image-tag>}"
 
 echo "==> Rolling back jeeb-gateway to tag: ${ROLLBACK_TAG}"
 
+# shellcheck disable=SC2087  # heredoc intentionally expands client-side so ROLLBACK_TAG lands in the remote env
 ssh "${DEPLOY_USER}@${DEPLOY_HOST}" << REMOTE
   set -euo pipefail
   cd /opt/jeeb

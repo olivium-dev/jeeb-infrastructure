@@ -2,9 +2,9 @@ name: backend-ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 concurrency:
   group: backend-ci-${{ github.ref }}
@@ -40,9 +40,35 @@ jobs:
           POSTGRES_PASSWORD: ci-only-not-a-secret
           JWT_KEY: ci-only-not-a-secret-key-32bytes-min
           JWT_ISSUER: jeeb-gateway
+          ACME_EMAIL: ci@example.com
+          GATEWAY_DOMAIN: api.staging.example.com
+          FIREBASE_PROJECT_ID: ci
+          FIREBASE_SA_HOST_PATH: /tmp/firebase-sa.json
+          S3_ACCESS_KEY: ci
+          S3_SECRET_KEY: ci-only-not-a-secret
         run: |
           docker compose -f docker-compose.yml -f docker-compose.staging.yml config -q
           echo "docker-compose.staging.yml (merged) is valid"
+
+      - name: Validate docker-compose.production.yml (merged with base)
+        env:
+          REGISTRY: ghcr.io/olivium-dev
+          IMAGE_TAG: ci
+          POSTGRES_USER: jeeb
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          JWT_KEY: ci-only-not-a-secret-key-32bytes-min
+          JWT_ISSUER: jeeb-gateway
+          ACME_EMAIL: ci@example.com
+          GATEWAY_DOMAIN: api.example.com
+          FIREBASE_PROJECT_ID: ci
+          FIREBASE_SA_HOST_PATH: /tmp/firebase-sa.json
+          S3_ENDPOINT: http://minio:9000
+          S3_BUCKET: jeeb-ci
+          S3_ACCESS_KEY: ci
+          S3_SECRET_KEY: ci-only-not-a-secret
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.production.yml config -q
+          echo "docker-compose.production.yml (merged) is valid"
 
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
@@ -63,7 +89,7 @@ jobs:
       - name: Run yamllint
         run: |
           yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, truthy: {check-keys: false}, comments: {min-spaces-from-content: 1}}}" \
-            docker-compose.yml docker-compose.staging.yml .github/workflows/
+            docker-compose.yml docker-compose.staging.yml docker-compose.production.yml .github/workflows/
 
       - name: Install actionlint
         run: |

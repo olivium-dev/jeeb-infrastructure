@@ -100,7 +100,18 @@ There is no "rollback an installed TestFlight build" — TestFlight and Play Int
 | iOS: `Provisioning profile ... doesn't include bundle identifier app.jeeb.mobile`             | New bundle ID never registered                          | Run `match appstore` locally (with write access) to provision; commit to signing repo. |
 | Both: workflow dispatch shows no environment-approval prompt                                  | `mobile-release` environment not configured             | Settings → Environments → create `mobile-release` with required reviewers. |
 
-## 8. Escalation
+## 8. OTA hotfix path
+
+For Dart-only fixes, prefer a Shorebird OTA patch over a new store build —
+it ships in minutes instead of hours and reuses the same `mobile-release`
+environment approval. Procedure: [`mobile-ota-runbook.md`](./mobile-ota-runbook.md).
+Decision context: [`../docs/adr/0001-shorebird-ota.md`](../docs/adr/0001-shorebird-ota.md).
+
+A store release is **still required** when the diff touches `android/`,
+`ios/`, plugin native code, `pubspec.yaml`, or `pubspec.lock` — the
+OTA helper script (`scripts/shorebird-patch.sh`) refuses those automatically.
+
+## 9. Escalation
 
 | Severity | Trigger                                                                 | Page                          |
 |----------|-------------------------------------------------------------------------|-------------------------------|

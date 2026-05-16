@@ -88,6 +88,22 @@ If `image_tag` is omitted from the production rollback workflow, the script
 reads the last entry from `/opt/jeeb/.deploy-history` (written automatically
 by every successful deploy).
 
+## Mobile OTA (Shorebird)
+
+Dart-only hotfixes ship over-the-air via Shorebird Code Push instead of a
+full store review cycle. Native (Kotlin/Swift), plugin, or `pubspec.yaml`
+changes still require a store release.
+
+| Track       | Workflow                                                                             | Helper                            |
+| ----------- | ------------------------------------------------------------------------------------ | --------------------------------- |
+| staging     | `jeeb-mobile/.github/workflows/mobile-ota-shorebird.yml` (track=staging, default)    | `scripts/shorebird-patch.sh`      |
+| beta        | same workflow, track=beta                                                            | `scripts/shorebird-patch.sh`      |
+| production  | same workflow, track=production (requires `mobile-release` env approval)             | `scripts/shorebird-patch.sh`      |
+| rollback    | n/a — cut a forward patch from the last-good ref                                     | `scripts/shorebird-rollback.sh`   |
+
+Decision: [`docs/adr/0001-shorebird-ota.md`](docs/adr/0001-shorebird-ota.md).
+Operating procedure: [`deploy/mobile-ota-runbook.md`](deploy/mobile-ota-runbook.md).
+
 ## File Structure
 
 ```
@@ -101,7 +117,12 @@ jeeb-infrastructure/
 │   ├── rollback.sh                   # Staging rollback to a previous tag
 │   ├── production-deploy.sh          # Production deploy with health probe + auto-rollback
 │   ├── production-rollback.sh        # Production rollback (5-min SLO)
-│   └── runbook-production.md         # On-call runbook
+│   ├── runbook-production.md         # Backend on-call runbook
+│   ├── mobile-release-runbook.md     # TestFlight / Play Internal store releases
+│   └── mobile-ota-runbook.md         # Shorebird OTA patches (Dart-only)
+├── docs/
+│   └── adr/
+│       └── 0001-shorebird-ota.md     # Why Shorebird over CodePush
 ├── .github/
 │   ├── workflows/
 │   │   ├── backend-ci.yml            # Per-PR lint + smoke
@@ -110,7 +131,9 @@ jeeb-infrastructure/
 │   │   └── rollback-production.yml   # One-click rollback
 │   └── CODEOWNERS
 ├── scripts/
-│   └── smoke-test.sh                 # Local + CI smoke
+│   ├── smoke-test.sh                 # Local + CI smoke
+│   ├── shorebird-patch.sh            # Cut an OTA patch (with native-change guard)
+│   └── shorebird-rollback.sh         # Forward-patch rollback for a bad OTA
 ├── legal/                             # Compliance docs (KYC, ToS, etc.)
 └── README.md
 ```

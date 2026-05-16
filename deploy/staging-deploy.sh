@@ -10,9 +10,6 @@ set -euo pipefail
 #   - REGISTRY, IMAGE_TAG, DEPLOY_HOST, DEPLOY_USER env vars set
 # ──────────────────────────────────────────────
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
 : "${REGISTRY:?REGISTRY is required}"
 : "${IMAGE_TAG:?IMAGE_TAG is required}"
 : "${DEPLOY_HOST:?DEPLOY_HOST is required}"
@@ -21,6 +18,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 echo "==> Deploying jeeb-gateway:${IMAGE_TAG} to staging (${DEPLOY_HOST})"
 
 # Pull the latest image on the remote host
+# shellcheck disable=SC2087  # heredoc intentionally expands client-side so REGISTRY/IMAGE_TAG land in the remote env
 ssh "${DEPLOY_USER}@${DEPLOY_HOST}" << REMOTE
   set -euo pipefail
   cd /opt/jeeb

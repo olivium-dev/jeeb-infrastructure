@@ -1,0 +1,96 @@
+name: Deploy to Production
+
+# Production deploys are MANUAL ONLY (workflow_dispatch). There is no `on: push`
+# trigger. The GitHub `production` environment protects this workflow with
+# required reviewers and a deployment branch policy (set in repo settings).
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (must already be pushed to GHCR, e.g. sha-3f9a1c2 or v1.2.3)"
+        required: true
+        type: string
+      confirm_production:
+        description: "Type 'PRODUCTION' to confirm"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/olivium-dev
+  IMAGE_TAG: ${{ inputs.image_tag }}
+
+jobs:
+  guard:
+    name: Confirm production intent
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Verify confirmation
+        run: |
+          if [ "${{ inputs.confirm_production }}" != "PRODUCTION" ]; then
+            echo "ERROR: confirm_production must be the exact string 'PRODUCTION'."
+            echo "       This guard exists so production cannot be deployed by mis-click."
+            exit 1
+          fi
+          echo "Production deploy confirmed for tag ${{ inputs.image_tag }}"
+
+  deploy:
+    name: Deploy jeeb-gateway to production
+    needs: guard
+    runs-on: ubuntu-22.04
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR (verify image exists)
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          if ! docker manifest inspect "${REGISTRY}/jeeb-gateway:${IMAGE_TAG}" > /dev/null 2>&1; then
+            echo "ERROR: ${REGISTRY}/jeeb-gateway:${IMAGE_TAG} does not exist in registry."
+            echo "       Push the image from jeeb-gateway CI before deploying production."
+            exit 1
+          fi
+          echo "Image exists: ${REGISTRY}/jeeb-gateway:${IMAGE_TAG}"
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${DEPLOY_SSH_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy to production
+        env:
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+          DEPLOY_USER: ${{ secrets.PRODUCTION_USER }}
+          GATEWAY_DOMAIN: ${{ secrets.PRODUCTION_DOMAIN }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          chmod +x deploy/production-deploy.sh deploy/production-rollback.sh
+          ./deploy/production-deploy.sh
+
+      - name: Post-deploy smoke
+        env:
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          echo "Final verification at ${PRODUCTION_URL}/health/live"
+          curl -fsS --max-time 10 "${PRODUCTION_URL}/health/live"
+          echo
+          echo "Production deploy of ${IMAGE_TAG} verified."

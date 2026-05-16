@@ -1,0 +1,172 @@
+# jeeb-infrastructure — observability overlay
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml \
+#     --profile monitoring up -d
+#
+# Wires Prometheus + Grafana + OTel Collector to the same jeeb-net so that
+# backend services can ship OTLP to http://otel-collector:4317 and Grafana
+# can scrape Prometheus at http://prometheus:9090.
+
+version: "3.9"
+
+services:
+  # Inject OTel + Sentry env into the gateway only when the monitoring
+  # profile is active. Keeps observability config out of the base compose
+  # so a plain `docker compose up -d` stays lean.
+  jeeb-gateway:
+    environment:
+      OTEL_SERVICE_NAME: "jeeb-gateway"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}"
+      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=${ENVIRONMENT:-development},service.namespace=jeeb"
+      SENTRY__DSN: "${SENTRY_DSN:-}"
+      SENTRY__ENVIRONMENT: "${ENVIRONMENT:-development}"
+      SENTRY__TRACES_SAMPLE_RATE: "${SENTRY_TRACES_SAMPLE_RATE:-0.1}"
+    ## Opts this container in to Promtail's docker_sd scrape — keeps
+    ## monitoring-stack containers (which are noisy and not part of
+    ## the service AC) out of the labelled log stream.
+    labels:
+      logging: "promtail"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    profiles: ["monitoring"]
+    command: ["--config=/etc/otel/config.yml"]
+    environment:
+      ENVIRONMENT: "${ENVIRONMENT:-development}"
+      SENTRY_OTLP_ENDPOINT: "${SENTRY_OTLP_ENDPOINT:-http://sentry-otlp.invalid}"
+      SENTRY_KEY: "${SENTRY_KEY:-}"
+    volumes:
+      - ./monitoring/otel/otel-collector-config.yml:/etc/otel/config.yml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus scrape (re-exposed OTLP metrics)
+      - "8888:8888"   # Collector's own internal metrics
+    networks:
+      - jeeb-net
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    environment:
+      ENVIRONMENT: "${ENVIRONMENT:-development}"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+    networks:
+      - jeeb-net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: ["monitoring"]
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - ./monitoring/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - jeeb-net
+    restart: unless-stopped
+
+  # Container CPU/memory metrics — feeds the horizontal-scaling alerts in
+  # monitoring/prometheus/alerts.yml (ContainerHighCpu, ContainerHighMemory).
+  # See docs/scaling-runbook.md.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    profiles: ["monitoring"]
+    command:
+      - --housekeeping_interval=15s
+      - --docker_only=true
+      - --store_container_labels=false
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    privileged: true
+    ports:
+      - "8080:8080"
+    networks:
+      - jeeb-net
+    restart: unless-stopped
+
+  # Host CPU/memory/disk metrics — used by node-level capacity panels and
+  # secondary scaling signals (cAdvisor covers the container view).
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    profiles: ["monitoring"]
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      - "9100:9100"
+    networks:
+      - jeeb-net
+    restart: unless-stopped
+
+  # Loki — log store. Promtail ships container stdout here as labelled
+  # streams; Grafana queries via the "Loki" datasource provisioned in
+  # monitoring/grafana/provisioning/datasources/datasources.yml.
+  loki:
+    image: grafana/loki:3.2.1
+    profiles: ["monitoring"]
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - jeeb-net
+    restart: unless-stopped
+
+  # Promtail — scrapes Docker container stdout from any container
+  # tagged with the `logging=promtail` label, parses the org-mandated
+  # JSON log line (ts, level, service, trace_id, span_id, msg), and
+  # pushes labelled streams to Loki.
+  promtail:
+    image: grafana/promtail:3.2.1
+    profiles: ["monitoring"]
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    volumes:
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/tmp
+    depends_on:
+      - loki
+    networks:
+      - jeeb-net
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  promtail-positions:

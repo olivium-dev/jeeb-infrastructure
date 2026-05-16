@@ -1,0 +1,64 @@
+## Promtail — scrapes Docker container stdout, parses the JSON log
+## line emitted by every Jeeb service, and pushes labelled streams
+## to Loki.
+##
+## The structured-log contract (see docs/monitoring.md §2) requires
+## every line to be a JSON object with at minimum: ts, level, service,
+## trace_id, span_id, msg. Promtail extracts those into Loki labels
+## (service, level) and into log fields (trace_id) so the Grafana
+## "Logs" datasource can show a clickable trace-id link.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    batchwait: 1s
+    batchsize: 1048576
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+        filters:
+          - name: label
+            values: ["logging=promtail"]
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'project'
+    pipeline_stages:
+      ## Drop anything that isn't a JSON object. Crash output and pre-init
+      ## prints stay in raw stdout but don't pollute the labelled stream.
+      - match:
+          selector: '{container=~".+"}'
+          stages:
+            - json:
+                expressions:
+                  ts: ts
+                  level: level
+                  service_name: service
+                  trace_id: trace_id
+                  span_id: span_id
+                  msg: msg
+            - labels:
+                level:
+                service_name:
+            - timestamp:
+                source: ts
+                format: RFC3339Nano
+                action_on_failure: skip
+            ## Re-emit the parsed message as the line, falling back to the
+            ## original stdout when the line wasn't JSON.
+            - output:
+                source: msg

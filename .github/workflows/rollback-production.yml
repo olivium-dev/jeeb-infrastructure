@@ -1,0 +1,54 @@
+name: Rollback Production
+
+# Click-to-rollback. Designed to complete in <5 minutes wall-clock (acceptance
+# criterion for T-devops-003). Pass an empty `image_tag` to roll back to the
+# last entry in /opt/jeeb/.deploy-history on the production host.
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to roll back to (leave empty for last-known-good)"
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/olivium-dev
+
+jobs:
+  rollback:
+    name: Rollback jeeb-gateway in production
+    runs-on: ubuntu-22.04
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${DEPLOY_SSH_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Roll back
+        env:
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_HOST }}
+          DEPLOY_USER: ${{ secrets.PRODUCTION_USER }}
+          GATEWAY_DOMAIN: ${{ secrets.PRODUCTION_DOMAIN }}
+          REGISTRY: ${{ env.REGISTRY }}
+        run: |
+          chmod +x deploy/production-rollback.sh
+          ./deploy/production-rollback.sh "${{ inputs.image_tag }}"

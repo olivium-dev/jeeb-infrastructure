@@ -1,17 +1,74 @@
 # jeeb-infrastructure — staging overrides
-# Usage: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
-
-version: "3.9"
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+#
+# Staging mirrors production topology (Traefik + TLS + MinIO + Firebase) but
+# uses smaller resource limits and Let's Encrypt staging-issuer is allowed via
+# ACME_CA_SERVER to avoid rate limits during iteration.
 
 services:
+  traefik:
+    image: traefik:v3.1
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL:?ACME_EMAIL is required for Let's Encrypt}"
+      - "--certificatesresolvers.le.acme.caserver=${ACME_CA_SERVER:-https://acme-staging-v02.api.letsencrypt.org/directory}"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      - "--accesslog=true"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "traefik-acme:/letsencrypt"
+    networks:
+      - jeeb-net
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   jeeb-gateway:
     build: !reset null
     image: "${REGISTRY}/jeeb-gateway:${IMAGE_TAG:-latest}"
     restart: unless-stopped
+    ports: !reset []
     environment:
       ASPNETCORE_ENVIRONMENT: Staging
+      Firebase__ProjectId: "${FIREBASE_PROJECT_ID}"
+      Firebase__CredentialsPath: "/run/secrets/firebase-sa.json"
+      Storage__Provider: "${STORAGE_PROVIDER:-minio}"
+      Storage__Endpoint: "${S3_ENDPOINT:-http://minio:9000}"
+      Storage__Bucket: "${S3_BUCKET:-jeeb-staging}"
+      Storage__AccessKey: "${S3_ACCESS_KEY}"
+      Storage__SecretKey: "${S3_SECRET_KEY}"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gateway.rule=Host(`${GATEWAY_DOMAIN:?GATEWAY_DOMAIN is required}`)"
+      - "traefik.http.routers.gateway.entrypoints=websecure"
+      - "traefik.http.routers.gateway.tls=true"
+      - "traefik.http.routers.gateway.tls.certresolver=le"
+      - "traefik.http.services.gateway.loadbalancer.server.port=8080"
+    volumes:
+      - "${FIREBASE_SA_HOST_PATH:?FIREBASE_SA_HOST_PATH is required}:/run/secrets/firebase-sa.json:ro"
     deploy:
       replicas: 1
+      update_config:
+        order: start-first
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 20s
       resources:
         limits:
           cpus: "1.0"
@@ -22,6 +79,7 @@ services:
 
   postgres:
     restart: unless-stopped
+    ports: !reset []
     environment:
       POSTGRES_USER: "${POSTGRES_USER}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
@@ -33,9 +91,7 @@ services:
 
   redis:
     restart: unless-stopped
-    # Inherit redis.conf mount from docker-compose.yml; override maxmemory to
-    # match the container memory limit so the OOM-killer doesn't race the
-    # eviction loop on staging.
+    ports: !reset []
     command:
       - "redis-server"
       - "/usr/local/etc/redis/redis.conf"
@@ -46,3 +102,37 @@ services:
         limits:
           cpus: "0.5"
           memory: 256M
+
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}"
+      MINIO_ROOT_PASSWORD: "${S3_SECRET_KEY:?S3_SECRET_KEY is required}"
+    volumes:
+      - "minio-data:/data"
+    networks:
+      - jeeb-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio-api.rule=Host(`${MINIO_API_DOMAIN:-s3.${GATEWAY_DOMAIN}}`)"
+      - "traefik.http.routers.minio-api.entrypoints=websecure"
+      - "traefik.http.routers.minio-api.tls=true"
+      - "traefik.http.routers.minio-api.tls.certresolver=le"
+      - "traefik.http.routers.minio-api.service=minio-api"
+      - "traefik.http.services.minio-api.loadbalancer.server.port=9000"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+volumes:
+  traefik-acme:
+  minio-data:

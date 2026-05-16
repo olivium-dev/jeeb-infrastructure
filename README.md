@@ -32,7 +32,7 @@ curl http://localhost:5000/health/live
 | traefik        | `traefik:v3.1`                       | 80, 443    | TLS + ingress (staging/prod)  |
 | jeeb-gateway   | built from `../jeeb-gateway`         | 5000:8080  | BFF gateway (ASP.NET Core)    |
 | postgres       | `postgres:16-alpine`                 | 5432:5432  | Primary database              |
-| redis          | `redis:7-alpine`                     | 6379:6379  | Cache / session store         |
+| redis          | `redis:7-alpine`                     | 6379:6379  | Geo / pub-sub / cache / rate-limit (see [`redis/`](./redis/)) |
 | minio          | `minio/minio:RELEASE.2025-01-20…`    | n/a        | S3-compatible object storage  |
 
 The gateway listens on `:8080` internally. Locally it is published at `:5000`;
@@ -163,6 +163,10 @@ jeeb-infrastructure/
 │   ├── runbook-production.md         # Backend on-call runbook
 │   ├── mobile-release-runbook.md     # TestFlight / Play Internal store releases
 │   └── mobile-ota-runbook.md         # Shorebird OTA patches (Dart-only)
+├── redis/
+│   ├── redis.conf                    # Geo / pub-sub / cache / rate-limit config
+│   ├── smoke-test.sh                 # Validates Redis workloads post-up
+│   └── README.md                     # Workload contract + ops notes
 ├── docs/
 │   ├── monitoring.md                 # Per-stack OTel + Sentry + Crashlytics wire-up
 │   ├── scaling-runbook.md            # Horizontal scaling procedure + 4h SLO (T-devops-008)

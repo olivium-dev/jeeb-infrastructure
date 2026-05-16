@@ -92,6 +92,11 @@ services:
   redis:
     restart: unless-stopped
     ports: !reset []
+    command:
+      - "redis-server"
+      - "/usr/local/etc/redis/redis.conf"
+      - "--maxmemory"
+      - "200mb"
     deploy:
       resources:
         limits:

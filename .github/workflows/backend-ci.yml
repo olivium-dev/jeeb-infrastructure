@@ -1,0 +1,110 @@
+name: backend-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (compose + shell + yaml)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Validate docker-compose.yml
+        env:
+          POSTGRES_USER: jeeb
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          JWT_KEY: ci-only-not-a-secret-key-32bytes-min
+          JWT_ISSUER: jeeb-gateway
+        run: |
+          docker compose -f docker-compose.yml config -q
+          echo "docker-compose.yml is valid"
+
+      - name: Validate docker-compose.staging.yml (merged with base)
+        env:
+          REGISTRY: ghcr.io/olivium-dev
+          IMAGE_TAG: ci
+          POSTGRES_USER: jeeb
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          JWT_KEY: ci-only-not-a-secret-key-32bytes-min
+          JWT_ISSUER: jeeb-gateway
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.staging.yml config -q
+          echo "docker-compose.staging.yml (merged) is valid"
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: |
+          shopt -s globstar nullglob
+          files=(deploy/**/*.sh scripts/**/*.sh)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No shell scripts to lint"
+            exit 0
+          fi
+          shellcheck -x "${files[@]}"
+
+      - name: Install yamllint
+        run: pip install --user yamllint==1.35.1
+
+      - name: Run yamllint
+        run: |
+          yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, truthy: {check-keys: false}, comments: {min-spaces-from-content: 1}}}" \
+            docker-compose.yml docker-compose.staging.yml .github/workflows/
+
+      - name: Install actionlint
+        run: |
+          curl -sSLo /tmp/al.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.1/actionlint_1.7.1_linux_amd64.tar.gz
+          tar -xzf /tmp/al.tar.gz -C /tmp actionlint
+          sudo mv /tmp/actionlint /usr/local/bin/actionlint
+
+      - name: Run actionlint
+        run: actionlint -color
+
+  smoke:
+    name: Smoke (compose up + /health/live)
+    runs-on: ubuntu-22.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: jeeb-infrastructure
+
+      - name: Checkout jeeb-gateway (sibling repo)
+        uses: actions/checkout@v4
+        with:
+          repository: olivium-dev/jeeb-gateway
+          path: jeeb-gateway
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run backend smoke test
+        working-directory: jeeb-infrastructure
+        env:
+          POSTGRES_USER: jeeb
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          JWT_KEY: ci-only-not-a-secret-key-32bytes-min
+          JWT_ISSUER: jeeb-gateway
+        run: ./scripts/smoke-test.sh
+
+      - name: Dump logs on failure
+        if: failure()
+        working-directory: jeeb-infrastructure
+        run: docker compose logs --no-color || true
+
+      - name: Tear down
+        if: always()
+        working-directory: jeeb-infrastructure
+        run: docker compose down -v --remove-orphans || true

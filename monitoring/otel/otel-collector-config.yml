@@ -1,0 +1,77 @@
+# OpenTelemetry Collector — central pipeline for Jeeb backend telemetry.
+# All services point at this collector via OTEL_EXPORTER_OTLP_ENDPOINT.
+#
+# Flow:
+#   services --OTLP--> collector --(prometheus exporter)--> Prometheus scrape
+#                              \--(otlphttp Sentry)-------> Sentry traces
+#                              \--(debug)----------------> stdout (dev only)
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  # Tag every signal with deployment.environment so Grafana / Sentry can
+  # split staging from production from the same collector image.
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: ${env:ENVIRONMENT}
+        action: upsert
+
+exporters:
+  # Re-exposes OTLP metrics as Prometheus scrape on :8889/metrics.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    const_labels:
+      collector: jeeb-otel
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Sentry ingests OTLP/HTTP traces directly. Set SENTRY_DSN + endpoint
+  # via env; if SENTRY_DSN is empty the pipeline still runs but this
+  # exporter no-ops because the endpoint resolves to an unreachable host.
+  otlphttp/sentry:
+    endpoint: ${env:SENTRY_OTLP_ENDPOINT}
+    headers:
+      x-sentry-auth: "sentry_key=${env:SENTRY_KEY}"
+
+  debug:
+    verbosity: basic
+
+service:
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888
+
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus]
+
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/sentry, debug]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]

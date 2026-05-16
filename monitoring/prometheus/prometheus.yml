@@ -1,0 +1,49 @@
+# Prometheus scrape config for the Jeeb stack.
+# Loaded by the prometheus service in docker-compose.monitoring.yml.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: jeeb-local
+    environment: ${ENVIRONMENT:-development}
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # The OpenTelemetry Collector re-exports all OTLP metrics from every
+  # service as Prometheus metrics on :8889. Scraping the collector means
+  # we only need to point services at one endpoint (OTLP) and we don't
+  # have to maintain a Prometheus target list per service.
+  - job_name: otel-collector
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["otel-collector:8889"]
+        labels:
+          source: otel-collector
+
+  # Self-scrape so we can alert on Prometheus itself being unhealthy.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Direct scrape for services that expose /metrics natively
+  # (Postgres exporter, Redis exporter, etc. — added as needed).
+  # - job_name: postgres-exporter
+  #   static_configs:
+  #     - targets: ["postgres-exporter:9187"]
+
+  # cAdvisor — per-container CPU/memory. Feeds the horizontal-scaling
+  # alerts (ContainerHighCpu, ContainerHighMemory) in alerts.yml.
+  - job_name: cadvisor
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # node-exporter — host CPU/memory/disk. Used by node-level capacity
+  # panels and as a secondary signal when cAdvisor is unavailable.
+  - job_name: node-exporter
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["node-exporter:9100"]

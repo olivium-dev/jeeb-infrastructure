@@ -1,0 +1,124 @@
+# Starter alert rules for the Jeeb backend.
+# Evaluated by Prometheus on the same schedule as scrape_interval.
+
+groups:
+  - name: api-availability
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Prometheus has been unable to scrape {{ $labels.instance }} for 2m."
+
+      - alert: ApiHighErrorRate
+        expr: |
+          (
+            sum by (service_name) (
+              rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m])
+            )
+            /
+            sum by (service_name) (
+              rate(http_server_request_duration_seconds_count[5m])
+            )
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "5xx rate >5% on {{ $labels.service_name }}"
+          description: "Service {{ $labels.service_name }} is returning 5xx for >5% of requests over the last 5m."
+
+  - name: api-latency
+    rules:
+      - alert: ApiHighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (service_name, http_route, le) (
+              rate(http_server_request_duration_seconds_bucket[5m])
+            )
+          ) > 1
+        for: 10m
+        labels:
+          severity: warn
+        annotations:
+          summary: "p95 latency >1s on {{ $labels.service_name }} {{ $labels.http_route }}"
+          description: "p95 request duration has been above 1s for 10m. Investigate slow dependencies or DB queries."
+
+  # Horizontal-scaling triggers — sustained breaches signal that the
+  # current replica count or node pool can no longer absorb load.
+  # Runbook: docs/scaling-runbook.md (T-devops-008).
+  - name: capacity-scaling
+    rules:
+      - alert: ContainerHighCpu
+        # cAdvisor reports rate(container_cpu_usage_seconds_total) as
+        # cores consumed; divide by container_spec_cpu_quota / period
+        # to get utilization vs the container's CPU limit.
+        expr: |
+          (
+            sum by (name) (rate(container_cpu_usage_seconds_total{name=~".+",image!=""}[5m]))
+            /
+            ( sum by (name) (container_spec_cpu_quota{name=~".+"}) / sum by (name) (container_spec_cpu_period{name=~".+"}) )
+          ) > 0.70
+        for: 15m
+        labels:
+          severity: page
+          runbook: scaling-runbook
+        annotations:
+          summary: "CPU >70% sustained on container {{ $labels.name }}"
+          description: |
+            Container {{ $labels.name }} has used >70% of its CPU limit for 15m.
+            Trigger the horizontal scaling procedure in docs/scaling-runbook.md.
+            SLO: a new node / replica must be addable within 4h of this alert.
+
+      - alert: ContainerHighMemory
+        expr: |
+          (
+            container_memory_working_set_bytes{name=~".+",image!=""}
+            /
+            container_spec_memory_limit_bytes{name=~".+"}
+          ) > 0.80
+        for: 15m
+        labels:
+          severity: page
+          runbook: scaling-runbook
+        annotations:
+          summary: "Memory >80% sustained on container {{ $labels.name }}"
+          description: |
+            Container {{ $labels.name }} working-set is >80% of its memory limit for 15m.
+            OOM-kill risk is imminent — follow docs/scaling-runbook.md to add a
+            replica or a Swarm node within 4h.
+
+      # Secondary node-level signals (cluster, not container) — fire when
+      # the whole node is hot, which means adding replicas on the same
+      # node won't help and a new node must be joined to the Swarm.
+      - alert: NodeHighCpu
+        expr: |
+          100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 70
+        for: 15m
+        labels:
+          severity: page
+          runbook: scaling-runbook
+        annotations:
+          summary: "Node CPU >70% sustained on {{ $labels.instance }}"
+          description: |
+            Host {{ $labels.instance }} CPU utilisation is >70% for 15m.
+            Adding replicas on this node will not help — join a new Swarm
+            worker per docs/scaling-runbook.md §3 within 4h.
+
+      - alert: NodeHighMemory
+        expr: |
+          100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 80
+        for: 15m
+        labels:
+          severity: page
+          runbook: scaling-runbook
+        annotations:
+          summary: "Node memory >80% sustained on {{ $labels.instance }}"
+          description: |
+            Host {{ $labels.instance }} memory utilisation is >80% for 15m.
+            Free memory is insufficient to land new replicas — join a new
+            Swarm worker per docs/scaling-runbook.md §3 within 4h.

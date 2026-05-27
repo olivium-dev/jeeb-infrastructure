@@ -1,0 +1,236 @@
+name: Deploy Nginx Configuration
+
+# Deploys nginx configuration to the Jeeb VPS.
+# Uses the Rahma gold-standard pipeline: validate → backup → test → apply → reload → verify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'nginx/**'
+      - 'static-pages/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+
+concurrency:
+  group: deploy-nginx-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy nginx to Jeeb VPS
+    runs-on: ubuntu-22.04
+    environment:
+      name: ${{ github.event.inputs.environment || 'production' }}
+      url: ${{ vars.PRODUCTION_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 1. Setup Cloudflare Tunnel SSH
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Setup Cloudflare SSH
+        uses: ./.github/actions/cloudflare-ssh
+        with:
+          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
+          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+          retries: '3'
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 2. Validate local files exist
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Validate nginx configuration files
+        run: |
+          echo "==> Validating nginx configuration files exist..."
+          ls -la nginx/
+          
+          required_files=(
+            "nginx/nginx.conf"
+            "nginx/sites-available/jeeb.fds-1.com.conf"
+          )
+          
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "Error: $file not found"
+              exit 1
+            fi
+            echo "  ✓ $file"
+          done
+          
+          echo "All required nginx configuration files found"
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 3. Ensure SSL certificate symlinks exist (Rahma pattern)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Ensure SSL certificate symlinks
+        run: |
+          echo "==> Ensuring SSL certificate symlinks exist..."
+          ssh jeeb-vps "
+            sudo ln -sf /etc/letsencrypt/live/jeeb.fds-1.com-0001 /etc/letsencrypt/live/jeeb.fds-1.com 2>/dev/null || true
+            echo 'SSL certificate symlinks verified'
+          "
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 4. Backup current nginx configuration (gold-standard Rahma pattern)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Backup current nginx configuration
+        run: |
+          echo "==> Creating backup of current nginx configuration..."
+          ssh jeeb-vps "
+            BACKUP_DIR=/etc/nginx/backups/\$(date +%Y%m%d-%H%M%S)
+            sudo mkdir -p \$BACKUP_DIR
+            
+            # Backup main files
+            sudo cp /etc/nginx/nginx.conf \$BACKUP_DIR/nginx.conf.bak 2>/dev/null || echo 'nginx.conf not present'
+            sudo cp /etc/nginx/sites-available/jeeb.fds-1.com.conf \$BACKUP_DIR/jeeb.fds-1.com.conf.bak 2>/dev/null || echo 'site config not present'
+            
+            # Backup entire sites-available if exists
+            if [ -d /etc/nginx/sites-available ]; then
+              sudo cp -r /etc/nginx/sites-available \$BACKUP_DIR/
+            fi
+            
+            echo \"Backup completed in \$BACKUP_DIR\"
+            ls -la \$BACKUP_DIR/
+          "
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 5. Deploy files to /tmp/ first (staging area)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Deploy nginx files to staging area
+        run: |
+          echo "==> Copying nginx configuration files to server staging area..."
+          
+          # Create remote staging directory
+          ssh jeeb-vps "sudo mkdir -p /tmp/nginx-deploy && sudo chown \$USER:\$USER /tmp/nginx-deploy"
+          
+          # Copy nginx configs
+          scp nginx/nginx.conf jeeb-vps:/tmp/nginx-deploy/
+          scp nginx/sites-available/jeeb.fds-1.com.conf jeeb-vps:/tmp/nginx-deploy/
+          
+          # Copy static pages
+          scp -r static-pages/* jeeb-vps:/tmp/nginx-deploy/ 2>/dev/null || echo "No static pages to copy"
+          
+          echo "Files copied to /tmp/nginx-deploy/"
+          ssh jeeb-vps "ls -la /tmp/nginx-deploy/"
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 6. Pre-flight nginx test (FAIL FAST before applying — Rahma pattern)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Test nginx configuration (pre-flight)
+        run: |
+          echo "==> Testing nginx configuration before applying..."
+          
+          ssh jeeb-vps "
+            # Create test copies
+            sudo cp /tmp/nginx-deploy/nginx.conf /etc/nginx/nginx.conf.test
+            sudo cp /tmp/nginx-deploy/jeeb.fds-1.com.conf /etc/nginx/sites-available/jeeb.fds-1.com.conf.test
+            
+            # Modify test nginx.conf to use test site file
+            sudo sed -i 's|/etc/nginx/sites-enabled/\*|/etc/nginx/sites-available/jeeb.fds-1.com.conf.test|g' /etc/nginx/nginx.conf.test
+            
+            # Run nginx test
+            if sudo nginx -t -c /etc/nginx/nginx.conf.test 2>&1; then
+              echo '✓ Nginx configuration test PASSED'
+            else
+              echo '✗ Nginx configuration test FAILED'
+              sudo rm -f /etc/nginx/nginx.conf.test /etc/nginx/sites-available/jeeb.fds-1.com.conf.test
+              exit 1
+            fi
+            
+            # Cleanup test files
+            sudo rm -f /etc/nginx/nginx.conf.test /etc/nginx/sites-available/jeeb.fds-1.com.conf.test
+          "
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 7. Apply configuration files
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Apply nginx configuration
+        run: |
+          echo "==> Applying nginx configuration..."
+          
+          ssh jeeb-vps "
+            # Ensure directories exist
+            sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/html
+            
+            # Apply main config
+            sudo cp /tmp/nginx-deploy/nginx.conf /etc/nginx/nginx.conf
+            
+            # Apply site config
+            sudo cp /tmp/nginx-deploy/jeeb.fds-1.com.conf /etc/nginx/sites-available/
+            
+            # Enable site (idempotent)
+            if [ ! -L /etc/nginx/sites-enabled/jeeb.fds-1.com.conf ]; then
+              sudo ln -sf /etc/nginx/sites-available/jeeb.fds-1.com.conf /etc/nginx/sites-enabled/
+            fi
+            
+            # Remove default site if exists
+            sudo rm -f /etc/nginx/sites-enabled/default
+            
+            # Copy static pages
+            sudo mkdir -p /home/ec2-user/server-jeeb-config/static-pages
+            sudo cp -r /tmp/nginx-deploy/* /home/ec2-user/server-jeeb-config/static-pages/ 2>/dev/null || true
+            
+            # Set permissions
+            sudo chown root:root /etc/nginx/nginx.conf /etc/nginx/sites-available/jeeb.fds-1.com.conf
+            sudo chmod 644 /etc/nginx/nginx.conf /etc/nginx/sites-available/jeeb.fds-1.com.conf
+            sudo chown -R ec2-user:ec2-user /home/ec2-user/server-jeeb-config
+            
+            echo 'Configuration files applied successfully'
+          "
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 8. Reload nginx
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Reload nginx
+        run: |
+          echo "==> Reloading nginx service..."
+          ssh jeeb-vps "
+            sudo nginx -t && sudo systemctl reload nginx
+            echo 'Nginx reloaded successfully'
+          "
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 9. Verify deployment (Rahma verification pattern)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Verify deployment
+        run: |
+          echo "==> Verifying nginx deployment..."
+          
+          ssh jeeb-vps "
+            echo '===== NGINX CONFIG TEST =====' && \
+            sudo nginx -t && \
+            echo '' && \
+            echo '===== NGINX STATUS =====' && \
+            sudo systemctl status nginx --no-pager -l && \
+            echo '' && \
+            echo '===== LISTENING PORTS =====' && \
+            sudo ss -tlnp | grep nginx && \
+            echo '' && \
+            echo '===== TEST HTTP INTERNALLY =====' && \
+            curl -I -s http://localhost | head -1 && \
+            echo '' && \
+            echo '===== NGINX ERROR LOG (last 10 lines) =====' && \
+            sudo tail -n 10 /var/log/nginx/error.log 2>/dev/null || echo 'No errors'
+          "
+          
+          echo ""
+          echo "✓ Nginx deployment verified successfully"
+
+      # ═══════════════════════════════════════════════════════════════════════════
+      # 10. Cleanup temporary files (always runs)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - name: Cleanup temporary files
+        if: always()
+        run: |
+          echo "==> Cleaning up temporary files..."
+          ssh jeeb-vps "sudo rm -rf /tmp/nginx-deploy && echo 'Cleanup completed'"

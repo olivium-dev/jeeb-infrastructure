@@ -1,0 +1,167 @@
+name: Swarm Service Rollback
+
+# Rolls back a Docker Swarm service to a previous image tag.
+# Use when a deployment fails or has issues.
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_name:
+        description: 'Name of the Docker Swarm service to rollback'
+        required: true
+        type: string
+        default: 'jeeb-gateway'
+      previous_run_id:
+        description: 'Previous image tag (run_id) to rollback to'
+        required: true
+        type: string
+      confirm:
+        description: 'Type ROLLBACK to confirm'
+        required: true
+        type: string
+
+jobs:
+  rollback:
+    name: Rollback ${{ inputs.service_name }}
+    runs-on: ubuntu-22.04
+    environment:
+      name: production
+
+    steps:
+      - name: Confirm rollback intent
+        run: |
+          if [ "${{ inputs.confirm }}" != "ROLLBACK" ]; then
+            echo "ERROR: You must type 'ROLLBACK' to confirm"
+            exit 1
+          fi
+          echo "Rollback confirmed for ${{ inputs.service_name }} to tag ${{ inputs.previous_run_id }}"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Cloudflare SSH
+        uses: ./.github/actions/cloudflare-ssh
+        with:
+          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
+          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+          retries: '3'
+
+      - name: Capture current image tag
+        id: capture-current
+        run: |
+          echo "==> Capturing current image tag..."
+          
+          CURRENT_IMAGE=$(ssh jeeb-vps "
+            docker service inspect --format='{{ index .Spec.TaskTemplate.ContainerSpec.Image }}' ${{ inputs.service_name }} 2>/dev/null | awk -F: '{print \$NF}' || echo 'unknown'
+          ")
+          
+          echo "Current (pre-rollback) tag: $CURRENT_IMAGE"
+          echo "current_tag=$CURRENT_IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Perform rollback
+        run: |
+          echo "==> Rolling back ${{ inputs.service_name }}..."
+          
+          SERVICE_NAME="${{ inputs.service_name }}"
+          ROLLBACK_TAG="${{ inputs.previous_run_id }}"
+          ROLLBACK_IMAGE="ghcr.io/olivium-dev/${SERVICE_NAME}:${ROLLBACK_TAG}"
+          
+          ssh jeeb-vps "
+            echo 'Pulling rollback image: ${ROLLBACK_IMAGE}'
+            docker pull ${ROLLBACK_IMAGE}
+            
+            echo ''
+            echo 'Performing rollback...'
+            docker service update \\
+              --image ${ROLLBACK_IMAGE} \\
+              --rollback-parallelism 1 \\
+              --rollback-delay 10s \\
+              ${SERVICE_NAME}
+            
+            echo ''
+            echo 'Rollback initiated. Service status:'
+            docker service ps --no-trunc ${SERVICE_NAME} | head -10
+          "
+
+      - name: Verify rollback
+        run: |
+          echo "==> Verifying rollback..."
+          
+          SERVICE_NAME="${{ inputs.service_name }}"
+          MAX_WAIT=180
+          START_TIME=$(date +%s)
+          
+          while true; do
+            STATUS=$(ssh jeeb-vps "docker service inspect --format='{{.UpdateStatus.State}}' ${SERVICE_NAME} 2>/dev/null || echo 'unknown'")
+            
+            echo "Update status: $STATUS"
+            
+            if [ "$STATUS" = "completed" ]; then
+              echo "✓ Rollback completed successfully"
+              break
+            elif [ "$STATUS" = "paused" ]; then
+              echo "✗ Rollback encountered an error"
+              ssh jeeb-vps "docker service ps --no-trunc ${SERVICE_NAME} | head -20"
+              exit 1
+            fi
+            
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            
+            if [ $ELAPSED -ge $MAX_WAIT ]; then
+              echo "⚠ Timeout waiting for rollback (may still be in progress)"
+              ssh jeeb-vps "docker service ps --no-trunc ${SERVICE_NAME} | head -20"
+              break
+            fi
+            
+            echo "  Waiting... (${ELAPSED}s / ${MAX_WAIT}s)"
+            sleep 5
+          done
+
+      - name: Record rollback
+        run: |
+          echo "==> Recording rollback..."
+          
+          ssh jeeb-vps "
+            echo '\$(date -u +%FT%TZ)    ${{ inputs.service_name }}    ROLLBACK    ${{ inputs.previous_run_id }}    ${{ github.actor }}' >> /home/ec2-user/server-jeeb-config/.deploy-history
+            echo 'Rollback recorded'
+            tail -5 /home/ec2-user/server-jeeb-config/.deploy-history
+          "
+
+      - name: Health check (gateway)
+        if: inputs.service_name == 'jeeb-gateway'
+        run: |
+          echo "==> Running health check on gateway..."
+          
+          HEALTH_URL="${{ vars.PRODUCTION_URL }}/health/live"
+          MAX_RETRIES=20
+          
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "  Health check attempt $i/$MAX_RETRIES..."
+            
+            if curl -sf --max-time 10 "$HEALTH_URL" > /dev/null; then
+              echo "✓ Health check passed after rollback"
+              exit 0
+            fi
+            
+            echo "  Not ready, waiting 5s..."
+            sleep 5
+          done
+          
+          echo "⚠ Health check failed after rollback (service may need attention)"
+          # Don't fail the rollback — it's already been done
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════════════════════╗"
+          echo "║  Rollback Complete                                                         ║"
+          echo "╚════════════════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Service:           ${{ inputs.service_name }}"
+          echo "Rolled back to:    ${{ inputs.previous_run_id }}"
+          echo "Previous (failed): ${{ steps.capture-current.outputs.current_tag }}"
+          echo ""
+          echo "Final service status:"
+          ssh jeeb-vps "docker service ls --filter name=${{ inputs.service_name }}"

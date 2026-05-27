@@ -1,0 +1,55 @@
+name: Deploy Static Pages
+
+# Deploys static HTML/assets to the Jeeb VPS nginx directory
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'static-pages/**'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-static-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy static pages
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Cloudflare SSH
+        uses: ./.github/actions/cloudflare-ssh
+        with:
+          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
+          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+          retries: '3'
+
+      - name: Deploy static pages
+        run: |
+          echo "==> Deploying static pages..."
+          
+          # Ensure target directory exists
+          ssh jeeb-vps "sudo mkdir -p /home/ec2-user/server-jeeb-config/static-pages && sudo chown ec2-user:ec2-user /home/ec2-user/server-jeeb-config/static-pages"
+          
+          # Copy static files
+          scp -r static-pages/* jeeb-vps:/home/ec2-user/server-jeeb-config/static-pages/
+          
+          # Also copy to /var/www/html for default serving
+          ssh jeeb-vps "
+            sudo mkdir -p /var/www/html && \
+            sudo cp -r /home/ec2-user/server-jeeb-config/static-pages/* /var/www/html/ && \
+            sudo chown -R www-data:www-data /var/www/html
+          "
+          
+          echo "✓ Static pages deployed successfully"
+
+      - name: Verify static pages
+        run: |
+          echo "==> Verifying static pages..."
+          ssh jeeb-vps "ls -la /home/ec2-user/server-jeeb-config/static-pages/"

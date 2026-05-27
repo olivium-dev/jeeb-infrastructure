@@ -1,0 +1,215 @@
+name: Swarm Service Deploy
+
+# Reusable workflow for deploying/updating Docker Swarm services on Jeeb VPS
+# Called by service repos (jeeb-gateway, etc.) to perform rolling updates
+#
+# Usage from caller workflow:
+#   jobs:
+#     deploy:
+#       uses: olivium-dev/jeeb-infrastructure/.github/workflows/swarm-deploy.yml@main
+#       with:
+#         service_name: jeeb-gateway
+#         image_tag: ${{ github.run_id }}
+#         environment: production
+#       secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: 'Name of the Docker Swarm service'
+        required: true
+        type: string
+      image_tag:
+        description: 'GHCR image tag (typically github.run_id)'
+        required: true
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: string
+      published_port:
+        description: 'Host port to publish (if service needs to be created)'
+        required: false
+        type: string
+      target_port:
+        description: 'Container port to map to'
+        required: false
+        default: '8080'
+        type: string
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.service_name }}:${{ inputs.image_tag }}
+    runs-on: ubuntu-22.04
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ vars.PRODUCTION_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Cloudflare SSH
+        uses: ./.github/actions/cloudflare-ssh
+        with:
+          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
+          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+          retries: '3'
+
+      - name: Verify image exists in GHCR
+        run: |
+          echo "==> Verifying image exists in GHCR..."
+          
+          # Login to GHCR
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          
+          IMAGE="ghcr.io/olivium-dev/${{ inputs.service_name }}:${{ inputs.image_tag }}"
+          
+          if ! docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "ERROR: Image $IMAGE does not exist in registry"
+            echo "       Ensure the service repo has built and pushed the image"
+            exit 1
+          fi
+          
+          echo "✓ Image verified: $IMAGE"
+
+      - name: Capture current image tag for rollback
+        id: capture-current
+        run: |
+          echo "==> Capturing current image tag for rollback safety..."
+          
+          CURRENT_IMAGE=$(ssh jeeb-vps "
+            docker service inspect --format='{{ index .Spec.TaskTemplate.ContainerSpec.Image }}' ${{ inputs.service_name }} 2>/dev/null | awk -F: '{print \$NF}' || echo 'unknown'
+          ")
+          
+          echo "Current image tag: $CURRENT_IMAGE"
+          echo "previous_tag=$CURRENT_IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Swarm
+        run: |
+          echo "==> Deploying to Docker Swarm..."
+          
+          SERVICE_NAME="${{ inputs.service_name }}"
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          FULL_IMAGE="ghcr.io/olivium-dev/${SERVICE_NAME}:${IMAGE_TAG}"
+          
+          ssh jeeb-vps "
+            echo 'Pulling image: ${FULL_IMAGE}'
+            docker pull ${FULL_IMAGE}
+            
+            # Check if service exists
+            if docker service ls --format '{{.Name}}' | grep -q "^${SERVICE_NAME}\$"; then
+              echo 'Service exists, performing rolling update...'
+              docker service update \\
+                --image ${FULL_IMAGE} \\
+                --update-parallelism 1 \\
+                --update-delay 10s \\
+                --update-failure-action rollback \\
+                --rollback-parallelism 1 \\
+                --rollback-delay 10s \\
+                ${SERVICE_NAME}
+            else
+              echo 'Service does not exist!'
+              echo 'Please run swarm-bootstrap-service.yml first to create the service.'
+              exit 1
+            fi
+            
+            echo ''
+            echo 'Service status after update:'
+            docker service ps --no-trunc ${SERVICE_NAME} | head -10
+          "
+
+      - name: Verify deployment
+        run: |
+          echo "==> Verifying deployment..."
+          
+          SERVICE_NAME="${{ inputs.service_name }}"
+          MAX_WAIT=180
+          START_TIME=$(date +%s)
+          
+          while true; do
+            STATUS=$(ssh jeeb-vps "docker service inspect --format='{{.UpdateStatus.State}}' ${SERVICE_NAME} 2>/dev/null || echo 'unknown'")
+            
+            echo "Update status: $STATUS"
+            
+            if [ "$STATUS" = "completed" ]; then
+              echo "✓ Service update completed successfully"
+              break
+            elif [ "$STATUS" = "paused" ] || [ "$STATUS" = "rollback_started" ]; then
+              echo "✗ Service update failed or rolling back"
+              ssh jeeb-vps "docker service ps --no-trunc ${SERVICE_NAME} | head -20"
+              exit 1
+            fi
+            
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            
+            if [ $ELAPSED -ge $MAX_WAIT ]; then
+              echo "✗ Timeout waiting for service update"
+              ssh jeeb-vps "docker service ps --no-trunc ${SERVICE_NAME} | head -20"
+              exit 1
+            fi
+            
+            echo "  Waiting... (${ELAPSED}s / ${MAX_WAIT}s)"
+            sleep 5
+          done
+          
+          # Final verification
+          echo ""
+          echo "Final service status:"
+          ssh jeeb-vps "
+            docker service ls --filter name=${SERVICE_NAME}
+            docker service ps --no-trunc ${SERVICE_NAME} | head -5
+          "
+
+      - name: Health check (gateway)
+        if: inputs.service_name == 'jeeb-gateway'
+        run: |
+          echo "==> Running health check on gateway..."
+          
+          HEALTH_URL="${{ vars.PRODUCTION_URL }}/health/live"
+          MAX_RETRIES=20
+          
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "  Health check attempt $i/$MAX_RETRIES..."
+            
+            if curl -sf --max-time 10 "$HEALTH_URL" > /dev/null; then
+              echo "✓ Health check passed"
+              exit 0
+            fi
+            
+            echo "  Not ready, waiting 5s..."
+            sleep 5
+          done
+          
+          echo "✗ Health check failed after $MAX_RETRIES attempts"
+          exit 1
+
+      - name: Record deployment
+        run: |
+          echo "==> Recording deployment..."
+          
+          ssh jeeb-vps "
+            echo '\$(date -u +%FT%TZ)    ${{ inputs.service_name }}    ${{ inputs.image_tag }}    ${{ github.actor }}' >> /home/ec2-user/server-jeeb-config/.deploy-history
+            echo 'Deployment recorded'
+            tail -5 /home/ec2-user/server-jeeb-config/.deploy-history 2>/dev/null || echo '(new deploy history file)'
+          "
+
+      - name: Output rollback info
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════════════════════╗"
+          echo "║  Deployment Complete                                                       ║"
+          echo "╚════════════════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Service:        ${{ inputs.service_name }}"
+          echo "Image tag:      ${{ inputs.image_tag }}"
+          echo "Previous tag:   ${{ steps.capture-current.outputs.previous_tag }}"
+          echo ""
+          echo "To rollback, run:"
+          echo "  gh workflow run swarm-rollback.yml -R olivium-dev/jeeb-infrastructure \\"
+          echo "    -f service_name=${{ inputs.service_name }} \\"
+          echo "    -f previous_run_id=${{ steps.capture-current.outputs.previous_tag }}"

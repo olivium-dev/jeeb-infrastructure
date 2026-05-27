@@ -1,0 +1,106 @@
+name: Verify Server Status
+
+# Diagnostic workflow to verify VPS state
+# Equivalent to the §9 reproducible commands from the analysis
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run daily for health monitoring
+    - cron: '0 8 * * *'
+
+jobs:
+  verify:
+    name: Verify Jeeb VPS
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Cloudflare SSH
+        uses: ./.github/actions/cloudflare-ssh
+        with:
+          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
+          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+          retries: '3'
+
+      - name: System information
+        run: |
+          echo "==> System information..."
+          ssh jeeb-vps "uname -a && cat /etc/os-release | head -5"
+
+      - name: Docker Swarm status
+        run: |
+          echo "==> Docker Swarm status..."
+          ssh jeeb-vps "
+            echo 'Docker version:' && docker --version && echo '' && \
+            echo 'Swarm info:' && docker info 2>/dev/null | grep -E '^Swarm|^ Is Manager:|^ Nodes' && echo '' && \
+            echo 'Swarm nodes:' && docker node ls && echo '' && \
+            echo 'Swarm services:' && docker service ls
+          "
+
+      - name: nginx status
+        run: |
+          echo "==> nginx status..."
+          ssh jeeb-vps "
+            echo 'nginx version:' && nginx -v && echo '' && \
+            echo 'nginx config test:' && sudo nginx -t && echo '' && \
+            echo 'nginx service status:' && sudo systemctl status nginx --no-pager -l && echo '' && \
+            echo 'Listening ports:' && sudo ss -tlnp | grep nginx
+          "
+
+      - name: SSL certificates
+        run: |
+          echo "==> SSL certificates..."
+          ssh jeeb-vps "
+            sudo certbot certificates 2>/dev/null || echo 'certbot not configured yet'
+          "
+
+      - name: Cloudflared status
+        run: |
+          echo "==> Cloudflared status..."
+          ssh jeeb-vps "
+            echo 'cloudflared version:' && cloudflared --version && echo '' && \
+            echo 'HTTP tunnel status:' && sudo systemctl status cloudflare-http-tunnel --no-pager -l 2>/dev/null || echo 'Not running' && echo '' && \
+            echo 'SSH tunnel status:' && sudo systemctl status cloudflare-ssh-tunnel --no-pager -l 2>/dev/null || echo 'Not running'
+          "
+
+      - name: Firewall status
+        run: |
+          echo "==> Firewall status..."
+          ssh jeeb-vps "
+            sudo ufw status verbose 2>/dev/null || echo 'UFW not configured'
+          "
+
+      - name: Health check endpoints
+        run: |
+          echo "==> Health check endpoints..."
+          
+          # Internal health check
+          ssh jeeb-vps "curl -s http://localhost/health 2>/dev/null || echo 'Health endpoint not responding'"
+          
+          # Gateway health (if deployed)
+          ssh jeeb-vps "curl -s http://localhost:10000/health/live 2>/dev/null || echo 'Gateway not deployed yet'"
+
+      - name: Resource usage
+        run: |
+          echo "==> Resource usage..."
+          ssh jeeb-vps "
+            echo 'Memory:' && free -h && echo '' && \
+            echo 'Disk:' && df -h / && echo '' && \
+            echo 'Load:' && uptime
+          "
+
+      - name: Generate report summary
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════════════════════╗"
+          echo "║  Verification Complete                                                     ║"
+          echo "╚════════════════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "If any checks failed, review the logs above and consider:"
+          echo "  - Running deploy-nginx.yml if nginx configuration issues"
+          echo "  - Checking Cloudflare tunnel status if SSH fails"
+          echo "  - Verifying SSL certificates if HTTPS errors"

@@ -1,0 +1,60 @@
+name: Update SSL Certificate
+
+# Renews Let's Encrypt certificates using Cloudflare DNS-01 challenge
+# Mirrors the Rahma server-rahma-config workflow
+
+on:
+  schedule:
+    # Run twice daily (as recommended by Let's Encrypt/certbot)
+    - cron: '0 2,14 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ssl-renewal
+  cancel-in-progress: false
+
+jobs:
+  renew:
+    name: Renew SSL certificates
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Setup Cloudflare SSH
+        uses: ./.github/actions/cloudflare-ssh
+        with:
+          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
+          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+          retries: '3'
+
+      - name: Renew certificates
+        run: |
+          echo "==> Renewing Let's Encrypt certificates..."
+          
+          ssh jeeb-vps "
+            # Check if renewal is needed
+            echo 'Current certificates:'
+            sudo certbot certificates
+            
+            # Attempt renewal
+            sudo certbot renew --dns-cloudflare \
+              --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+              --quiet \
+              --deploy-hook 'systemctl reload nginx'
+            
+            echo 'Renewal completed'
+          "
+
+      - name: Verify certificates
+        run: |
+          echo "==> Verifying certificates..."
+          
+          ssh jeeb-vps "
+            echo 'Updated certificates:'
+            sudo certbot certificates
+            
+            # Test nginx configuration with new certs
+            sudo nginx -t
+          "
+          
+          echo "✓ SSL certificates renewed and verified"

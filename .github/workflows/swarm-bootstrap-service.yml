@@ -1,0 +1,191 @@
+name: Swarm Bootstrap Service
+
+# One-shot workflow to create a new Docker Swarm service for the first time.
+# Swarm has no 'create or update' — 'docker service update' fails on missing services.
+# Run this ONCE per service, then use swarm-deploy.yml for updates.
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_name:
+        description: 'Name of the Docker Swarm service'
+        required: true
+        type: string
+      image_tag:
+        description: 'Initial image tag (default: latest)'
+        required: true
+        default: 'latest'
+        type: string
+      published_port:
+        description: 'Host port to publish (e.g., 10000)'
+        required: true
+        type: string
+      target_port:
+        description: 'Container port to map'
+        required: true
+        default: '8080'
+        type: string
+      replicas:
+        description: 'Number of replicas'
+        required: true
+        default: '2'
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: string
+
+jobs:
+  bootstrap:
+    name: Bootstrap ${{ inputs.service_name }}
+    runs-on: ubuntu-22.04
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Cloudflare SSH
+        uses: ./.github/actions/cloudflare-ssh
+        with:
+          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
+          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+          retries: '3'
+
+      - name: Verify prerequisites
+        run: |
+          echo "==> Verifying Swarm prerequisites..."
+          
+          ssh jeeb-vps "
+            # Check Swarm is active
+            if ! docker info 2>/dev/null | grep -q 'Swarm: active'; then
+              echo 'ERROR: Docker Swarm is not active'
+              exit 1
+            fi
+            
+            # Check we're on the manager node
+            if ! docker node ls 2>/dev/null | grep -q 'Leader'; then
+              echo 'ERROR: Not on Swarm manager node'
+              exit 1
+            fi
+            
+            echo '✓ Swarm prerequisites verified'
+          "
+
+      - name: Check service does not already exist
+        run: |
+          echo "==> Checking service does not exist..."
+          
+          ssh jeeb-vps "
+            if docker service ls --format '{{.Name}}' | grep -q '^${{ inputs.service_name }}\$'; then
+              echo 'ERROR: Service ${{ inputs.service_name }} already exists!'
+              echo 'Use swarm-deploy.yml for updates, not bootstrap.'
+              exit 1
+            fi
+            
+            echo '✓ Service name is available'
+          "
+
+      - name: Pull image
+        run: |
+          echo "==> Pulling initial image..."
+          
+          FULL_IMAGE="ghcr.io/olivium-dev/${{ inputs.service_name }}:${{ inputs.image_tag }}"
+          
+          ssh jeeb-vps "
+            docker pull ${FULL_IMAGE} || echo 'Warning: Image pull failed (may not exist yet)'
+          "
+
+      - name: Create Swarm service
+        run: |
+          echo "==> Creating Docker Swarm service..."
+          
+          SERVICE_NAME="${{ inputs.service_name }}"
+          IMAGE="ghcr.io/olivium-dev/${SERVICE_NAME}:${{ inputs.image_tag }}"
+          PUBLISHED_PORT="${{ inputs.published_port }}"
+          TARGET_PORT="${{ inputs.target_port }}"
+          REPLICAS="${{ inputs.replicas }}"
+          
+          ssh jeeb-vps "
+            docker service create \\
+              --name ${SERVICE_NAME} \\
+              --replicas ${REPLICAS} \\
+              --publish published=${PUBLISHED_PORT},target=${TARGET_PORT} \\
+              --mode replicated \\
+              --update-parallelism 1 \\
+              --update-delay 10s \\
+              --update-failure-action rollback \\
+              --rollback-parallelism 1 \\
+              --rollback-delay 10s \\
+              --restart-condition on-failure \\
+              --restart-delay 5s \\
+              --restart-max-attempts 3 \\
+              --health-cmd 'wget --no-verbose --tries=1 --spider http://localhost:${TARGET_PORT}/health/live || exit 1' \\
+              --health-interval 30s \\
+              --health-timeout 5s \\
+              --health-retries 3 \\
+              --health-start-period 20s \\
+              --constraint 'node.role == manager' \\
+              ${IMAGE}
+            
+            echo ''
+            echo 'Service created:'
+            docker service ls --filter name=${SERVICE_NAME}
+          "
+
+      - name: Verify service
+        run: |
+          echo "==> Verifying service startup..."
+          
+          MAX_WAIT=120
+          START_TIME=$(date +%s)
+          
+          while true; do
+            RUNNING=$(ssh jeeb-vps "
+              docker service ps ${{ inputs.service_name }} --format '{{.CurrentState}}' 2>/dev/null | grep -c 'Running' || echo '0'
+            ")
+            
+            echo "Running replicas: $RUNNING / ${{ inputs.replicas }}"
+            
+            if [ "$RUNNING" = "${{ inputs.replicas }}" ]; then
+              echo "✓ All replicas running"
+              break
+            fi
+            
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            
+            if [ $ELAPSED -ge $MAX_WAIT ]; then
+              echo "⚠ Timeout waiting for all replicas (may still be starting)"
+              ssh jeeb-vps "docker service ps ${{ inputs.service_name }}"
+              break
+            fi
+            
+            sleep 5
+          done
+
+      - name: Final status
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════════════════════╗"
+          echo "║  Service Bootstrapped                                                      ║"
+          echo "╚════════════════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Service:       ${{ inputs.service_name }}"
+          echo "Image:         ghcr.io/olivium-dev/${{ inputs.service_name }}:${{ inputs.image_tag }}"
+          echo "Published:     ${{ inputs.published_port }} -> ${{ inputs.target_port }}"
+          echo "Replicas:      ${{ inputs.replicas }}"
+          echo ""
+          echo "Status:"
+          ssh jeeb-vps "docker service ls --filter name=${{ inputs.service_name }}"
+          echo ""
+          echo "Tasks:"
+          ssh jeeb-vps "docker service ps ${{ inputs.service_name }}"
+          echo ""
+          echo "Next steps:"
+          echo "  - Future updates: use swarm-deploy.yml"
+          echo "  - Rollback: use swarm-rollback.yml"
+          echo "  - Add nginx location block for /${{ inputs.service_name }}/"

@@ -1,230 +1,338 @@
 # jeeb-infrastructure
 
-Deployment configs, Docker Compose, and CI templates for the Jeeb product.
+Deployment infrastructure for the Jeeb platform using Docker Swarm + nginx on host, following the organization's proven pattern.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  GitHub Actions Runner                                                      │
+│  ┌──────────────────┐    cloudflared access tcp    ┌──────────────────┐    │
+│  │ Build & Push    │ ──────────────────────────▶ │ Jeeb VPS         │    │
+│  │ GHCR Image      │    (SSH over CF Tunnel)      │ 192.168.2.50     │    │
+│  └──────────────────┘                             └──────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                                            │
+                    ┌───────────────────────────────────────┴───────────┐
+                    │                                               │
+                    ▼                                               ▼
+            ┌──────────────┐                              ┌──────────────┐
+            │ nginx (host) │                              │ Docker Swarm │
+            │ :80 → :443   │─────proxy_pass────────────▶ │ Single-node  │
+            │ TLS LE       │      localhost:10000         │ Manager      │
+            └──────────────┘                              └──────────────┘
+                                                               │
+                                                    ┌──────────┴──────────┐
+                                                    │                     │
+                                                    ▼                     ▼
+                                            ┌──────────────┐     ┌──────────────┐
+                                            │ jeeb-gateway │     │   Future     │
+                                            │  ghcr:image  │     │  services    │
+                                            └──────────────┘     └──────────────┘
+```
+
+### Design Principles (from Rahma/Cremat/Saawt analysis)
+
+- **nginx on host** (not Traefik in container): TLS termination at host level
+- **Docker Swarm** single-node: Zero-downtime rolling updates via `docker service update`
+- **GHCR images** tagged with `:<github.run_id>`: Immutable, traceable deployments
+- **Cloudflare Tunnel**: No SSH port exposed to internet; GitHub Actions connect via `cloudflared access tcp`
+- **GitHub Actions**: All deploys automated; manual SSH only for emergency
 
 ## Environments
 
-| Env        | Compose files                                  | Trigger                                  | TLS                       | URL pattern                |
-| ---------- | ---------------------------------------------- | ---------------------------------------- | ------------------------- | -------------------------- |
-| local      | `docker-compose.yml`                           | `docker compose up`                      | none                      | http://localhost:5000      |
-| staging    | `docker-compose.yml` + `docker-compose.staging.yml` | auto on merge to `develop`           | Let's Encrypt (staging issuer by default) | https://api.staging.jeeb.app |
-| production | `docker-compose.yml` + `docker-compose.production.yml` | manual (`workflow_dispatch` + env protection) | Let's Encrypt (prod)      | https://api.jeeb.app       |
-
-Staging and production share the same topology (gateway + Postgres + Redis +
-Traefik + MinIO) but differ in resource limits, replica counts, restart
-policies, and ACME issuer.
+| Env        | Deployment Method                              | TLS               | URL                     |
+| ---------- | ---------------------------------------------- | ----------------- | ----------------------- |
+| local      | `docker compose` (legacy-compose/)             | none              | http://localhost:5000   |
+| staging    | GitHub Actions → Swarm (auto on push)          | Let's Encrypt     | https://jeeb.fds-1.com  |
+| production | GitHub Actions → Swarm (manual + approval)     | Let's Encrypt     | https://jeeb.fds-1.com  |
 
 ## Quick Start — Local Development
 
+For local development, use the legacy compose files:
+
 ```bash
-cp .env.example .env
-# Edit .env: at minimum POSTGRES_PASSWORD and JWT_KEY
+cd legacy-compose
+cp ../.env.example .env
+# Edit .env: POSTGRES_PASSWORD, JWT_KEY
 
 docker compose up -d
-docker compose ps
 curl http://localhost:5000/health/live
 ```
 
-## Services
+## GitHub Actions Workflows
 
-| Service        | Image                                | Local port | Purpose                       |
-| -------------- | ------------------------------------ | ---------- | ----------------------------- |
-| traefik        | `traefik:v3.1`                       | 80, 443    | TLS + ingress (staging/prod)  |
-| jeeb-gateway   | built from `../jeeb-gateway`         | 5000:8080  | BFF gateway (ASP.NET Core)    |
-| postgres       | `postgres:16-alpine`                 | 5432:5432  | Primary database              |
-| redis          | `redis:7-alpine`                     | 6379:6379  | Geo / pub-sub / cache / rate-limit (see [`redis/`](./redis/)) |
-| minio          | `minio/minio:RELEASE.2025-01-20…`    | n/a        | S3-compatible object storage  |
+### Infrastructure Workflows (jeeb-infrastructure)
 
-The gateway listens on `:8080` internally. Locally it is published at `:5000`;
-in staging/production Traefik fronts it on `:443` and the host port is unbound.
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `deploy-nginx.yml` | Push to `nginx/**` | Deploy nginx config with backup + test + verify |
+| `deploy-static-pages.yml` | Push to `static-pages/**` | Deploy static HTML/assets |
+| `update-ssl-certificate.yml` | Schedule 2× daily | Renew Let's Encrypt certs via DNS-01 |
+| `verify-server.yml` | Schedule daily + manual | Diagnostic: Swarm, nginx, SSL, cloudflared status |
+| `swarm-deploy.yml` | `workflow_call` | **Reusable** — deploy/update microservice images |
+| `swarm-bootstrap-service.yml` | Manual | One-time service creation (first deploy) |
+| `swarm-rollback.yml` | Manual | Rollback to previous image tag |
 
-## Smoke test (local + CI)
+### Service Deploy Workflows (jeeb-gateway, etc.)
 
-```bash
-cp .env.example .env
-./scripts/smoke-test.sh
-./scripts/smoke-test.sh 60   # custom timeout in seconds
-```
-
-Brings the local stack up, polls `/health/live` until 200, then tears down.
-Also run in `.github/workflows/backend-ci.yml` on every PR.
-
-## Deploy — Staging
-
-Staging deploys **automatically on merge to `develop`** via
-`.github/workflows/deploy-staging.yml`. To deploy a specific tag manually,
-use **Actions → Deploy to Staging → Run workflow** with an `image_tag` input.
-
-Manual from a shell:
-```bash
-REGISTRY=ghcr.io/olivium-dev IMAGE_TAG=latest \
-  DEPLOY_HOST=staging.example.com DEPLOY_USER=deploy \
-  GATEWAY_DOMAIN=api.staging.jeeb.app \
-  ./deploy/staging-deploy.sh
-```
-
-## Deploy — Production
-
-Production has **no `on: push` trigger**. Deploys are dispatched manually:
-
-1. **Actions → Deploy to Production → Run workflow**
-2. Inputs: `image_tag` (e.g. `sha-3f9a1c2`, `v1.2.3`) and `confirm_production`
-   (must equal the literal string `PRODUCTION`).
-3. Approve the `production` environment gate (required reviewer).
-
-The deploy script captures the currently-running tag before rolling out and
-auto-rolls-back on `/health/live` failure.
-
-Full procedure + failure modes: [`deploy/runbook-production.md`](deploy/runbook-production.md).
-
-## Rollback
-
-| Env        | Method                                            | SLO        |
-| ---------- | ------------------------------------------------- | ---------- |
-| staging    | `./deploy/rollback.sh <tag>`                      | best-effort |
-| production | **Actions → Rollback Production**, or `./deploy/production-rollback.sh [tag]` | **< 5 min** |
-
-If `image_tag` is omitted from the production rollback workflow, the script
-reads the last entry from `/opt/jeeb/.deploy-history` (written automatically
-by every successful deploy).
-
-## Mobile OTA (Shorebird)
-
-Dart-only hotfixes ship over-the-air via Shorebird Code Push instead of a
-full store review cycle. Native (Kotlin/Swift), plugin, or `pubspec.yaml`
-changes still require a store release.
-
-| Track       | Workflow                                                                             | Helper                            |
-| ----------- | ------------------------------------------------------------------------------------ | --------------------------------- |
-| staging     | `jeeb-mobile/.github/workflows/mobile-ota-shorebird.yml` (track=staging, default)    | `scripts/shorebird-patch.sh`      |
-| beta        | same workflow, track=beta                                                            | `scripts/shorebird-patch.sh`      |
-| production  | same workflow, track=production (requires `mobile-release` env approval)             | `scripts/shorebird-patch.sh`      |
-| rollback    | n/a — cut a forward patch from the last-good ref                                     | `scripts/shorebird-rollback.sh`   |
-
-Decision: [`docs/adr/0001-shorebird-ota.md`](docs/adr/0001-shorebird-ota.md).
-Operating procedure: [`deploy/mobile-ota-runbook.md`](deploy/mobile-ota-runbook.md).
-
-## Observability
-
-Prometheus + Grafana + OpenTelemetry Collector are bundled as an opt-in
-profile so the dev compose stays lean. Sentry handles backend exceptions
-and Crashlytics covers the Flutter app — see
-[`docs/monitoring.md`](docs/monitoring.md) for the per-stack wire-up.
-
-```bash
-# Bring up the API + monitoring stack together
-cat .env.example .env.monitoring.example > .env
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.monitoring.yml \
-  --profile monitoring up -d
-
-# Grafana    → http://localhost:3000  (admin / admin)
-# Prometheus → http://localhost:9090
-# Loki       → http://localhost:3100
-```
-
-The default `Jeeb / API latency` dashboard ships in the repo and shows
-p50/p95/p99 per endpoint plus 5xx error ratio. The companion
-`Jeeb / Structured logs` dashboard streams JSON-parsed container logs from
-Loki with a clickable `trace_id` field that pivots into the same trace in
-Sentry. Smoke-test the whole stack with:
-
-```bash
-./scripts/verify-monitoring.sh
-```
-
-## Capacity & horizontal scaling
-
-CPU > 70% and memory > 80% (sustained 15 m) page the on-call via the
-`ContainerHighCpu` / `ContainerHighMemory` / `NodeHighCpu` /
-`NodeHighMemory` alert rules in
-[`monitoring/prometheus/alerts.yml`](monitoring/prometheus/alerts.yml).
-The on-call follows [`docs/scaling-runbook.md`](docs/scaling-runbook.md)
-to scale a service replica or join a new Swarm worker within the 4-hour
-SLO. Container metrics come from `cadvisor`; host metrics from
-`node-exporter` — both run under the `monitoring` profile.
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `build.yml` | Push to `main` | Build, test, push image to GHCR |
+| `deploy-staging.yml` | After build success | Auto-deploy to staging |
+| `deploy-production.yml` | Manual + approval | Deploy to production |
 
 ## File Structure
 
 ```
 jeeb-infrastructure/
-├── docker-compose.yml                # Local dev environment
-├── docker-compose.staging.yml        # Staging (Traefik + MinIO + smaller limits)
-├── docker-compose.production.yml     # Production (Traefik + MinIO + 2x replicas + always-restart)
-├── docker-compose.monitoring.yml     # Prometheus + Grafana + OTel (profile: monitoring)
-├── .env.example                      # All variables (Postgres, JWT, Firebase, S3, TLS, deploy)
-├── .env.monitoring.example           # Observability env vars (Sentry, OTel, Grafana)
-├── deploy/
-│   ├── staging-deploy.sh             # SSH-based staging deploy
-│   ├── rollback.sh                   # Staging rollback to a previous tag
-│   ├── production-deploy.sh          # Production deploy with health probe + auto-rollback
-│   ├── production-rollback.sh        # Production rollback (5-min SLO)
-│   ├── runbook-production.md         # Backend on-call runbook
-│   ├── mobile-release-runbook.md     # TestFlight / Play Internal store releases
-│   └── mobile-ota-runbook.md         # Shorebird OTA patches (Dart-only)
-├── redis/
-│   ├── redis.conf                    # Geo / pub-sub / cache / rate-limit config
-│   ├── smoke-test.sh                 # Validates Redis workloads post-up
-│   └── README.md                     # Workload contract + ops notes
-├── docs/
-│   ├── monitoring.md                 # Per-stack OTel + Sentry + Crashlytics wire-up
-│   ├── scaling-runbook.md            # Horizontal scaling procedure + 4h SLO (T-devops-008)
-│   └── adr/
-│       └── 0001-shorebird-ota.md     # Why Shorebird over CodePush
-├── monitoring/
-│   ├── otel/otel-collector-config.yml
-│   ├── prometheus/{prometheus,alerts}.yml
-│   ├── loki/loki-config.yml
-│   ├── promtail/promtail-config.yml
-│   └── grafana/{grafana.ini,dashboards,provisioning}/
-├── .github/
-│   ├── workflows/
-│   │   ├── backend-ci.yml            # Per-PR lint + smoke
-│   │   ├── deploy-staging.yml        # Auto-deploy on merge to develop
-│   │   ├── deploy-production.yml     # Manual deploy with env protection
-│   │   └── rollback-production.yml   # One-click rollback
-│   └── CODEOWNERS
+├── nginx/
+│   ├── nginx.conf                    # Main nginx config
+│   ├── sites-available/            # Per-domain site configs
+│   │   └── jeeb.fds-1.com.conf     # Main site: TLS + proxy to :10000
+│   └── sites-enabled/              # Symlinks (managed by deploy-nginx.yml)
+├── static-pages/                   # Static HTML assets
+│   └── index.html                  # Default welcome page
 ├── scripts/
-│   ├── smoke-test.sh                 # Local + CI smoke
-│   ├── shorebird-patch.sh            # Cut an OTA patch (with native-change guard)
-│   └── shorebird-rollback.sh         # Forward-patch rollback for a bad OTA
-├── legal/                             # Compliance docs (KYC, ToS, etc.)
-└── README.md
+│   ├── bootstrap-vps.sh            # ONE-TIME: Bootstrap fresh VPS
+│   ├── smoke-test.sh               # Local smoke test
+│   ├── shorebird-*.sh              # Mobile OTA (unchanged)
+│   └── verify-*.sh                 # Verification scripts
+├── .github/
+│   ├── actions/
+│   │   └── cloudflare-ssh/         # Composite action for CF tunnel SSH
+│   │       └── action.yml
+│   └── workflows/
+│       ├── deploy-nginx.yml        # Gold-standard nginx deploy (Rahma pattern)
+│       ├── deploy-static-pages.yml # Static assets deploy
+│       ├── update-ssl-certificate.yml # Certbot renewal
+│       ├── verify-server.yml       # Diagnostic checks
+│       ├── swarm-deploy.yml        # Reusable: microservice deploy
+│       ├── swarm-bootstrap-service.yml # One-time service create
+│       └── swarm-rollback.yml      # Rollback helper
+├── legacy-compose/                 # PREVIOUS: Docker Compose + Traefik
+│   ├── docker-compose*.yml         # (Local dev only — not production)
+│   ├── deploy/*.sh                 # (Old deploy scripts)
+│   ├── workflows/                  # (Old workflows)
+│   └── README.md                   # Migration notes
+├── redis/                          # Redis config (for local dev)
+├── monitoring/                     # Prometheus/Grafana (opt-in)
+├── docs/                           # ADRs, runbooks
+└── README.md                       # This file
 ```
 
-## Required GitHub configuration
+## Required GitHub Secrets
 
-**Secrets** (sensitive — store in environment secrets):
+Configure these via `gh secret set`:
 
-| Name                     | Scope             | Purpose                                      |
-| ------------------------ | ----------------- | -------------------------------------------- |
-| `STAGING_HOST`           | `staging` env     | SSH host                                     |
-| `STAGING_USER`           | `staging` env     | SSH user                                     |
-| `STAGING_SSH_KEY`        | `staging` env     | SSH private key (ed25519)                    |
-| `STAGING_DOMAIN`         | `staging` env     | e.g. `api.staging.jeeb.app`                  |
-| `PRODUCTION_HOST`        | `production` env  | SSH host                                     |
-| `PRODUCTION_USER`        | `production` env  | SSH user                                     |
-| `PRODUCTION_SSH_KEY`     | `production` env  | SSH private key (ed25519)                    |
-| `PRODUCTION_DOMAIN`      | `production` env  | e.g. `api.jeeb.app`                          |
+| Secret | Purpose |
+|--------|---------|
+| `JEEB_SSH_PRIVATE_KEY` | ed25519 private key (base64-encoded) for VPS access |
+| `JEEB_SSH_HOST` | Cloudflare tunnel hostname: `ssh.jeeb.fds-1.com` |
+| `JEEB_DEPLOY_USER` | SSH user: `ec2-user` |
+| `CF_API_TOKEN` | Cloudflare API token (for certbot DNS-01) |
 
-**Variables** (non-sensitive — store in environment variables; needed by
-`environment.url` which doesn't accept `secrets`):
+### For Production Environment
 
-| Name              | Scope             | Purpose                              |
-| ----------------- | ----------------- | ------------------------------------ |
-| `STAGING_URL`     | `staging` env     | e.g. `https://api.staging.jeeb.app`  |
-| `PRODUCTION_URL`  | `production` env  | e.g. `https://api.jeeb.app`          |
+| Secret/Variable | Purpose |
+|-----------------|---------|
+| `PRODUCTION_DOMAIN` | `jeeb.fds-1.com` |
+| `PRODUCTION_URL` (variable) | `https://jeeb.fds-1.com` |
 
-The `production` GitHub environment MUST be configured with required reviewers
-and a deployment branch policy (`main` only). The `staging` environment may
-remain unrestricted.
+## Bootstrap a Fresh VPS (One-Time)
 
-## Reuse
+This is the **only** manual SSH step. After this, everything is GitHub Actions.
 
-This repo extends — it does not replace — the org's existing deploy patterns:
+### 1. Generate Deploy Key
 
-- BFF/gateway aggregation: `jeeb-gateway` (NSwag-generated clients).
-- Auth: Firebase Auth (phone OTP + Apple + Google + Facebook).
-- Payments: `unified_payment_gateway` (Elixir) — never bypassed.
-- Object storage: in-cluster MinIO for staging / managed S3 for production.
+```bash
+ssh-keygen -t ed25519 -f ./jeeb-deploy-key -N "" -C "jeeb-gh-actions"
+# Public key: jeeb-deploy-key.pub (for VPS authorized_keys)
+# Private key: jeeb-deploy-key (for GH secret)
+```
+
+### 2. Copy Bootstrap Script to VPS
+
+```bash
+# From your laptop, while on the same network as the VPS
+scp scripts/bootstrap-vps.sh ec2-user@192.168.2.50:/tmp/
+```
+
+### 3. Run Bootstrap (on VPS)
+
+```bash
+ssh ec2-user@192.168.2.50 'sudo \
+  BOOTSTRAP_DOMAIN=jeeb.fds-1.com \
+  GH_DEPLOY_PUBKEY="ssh-ed25519 AAAAC3..." \
+  CF_API_TOKEN="your-cloudflare-token" \
+  bash /tmp/bootstrap-vps.sh'
+```
+
+The bootstrap script:
+- Installs Docker, nginx, certbot, cloudflared, fail2ban
+- Initializes Docker Swarm single-node
+- Creates Cloudflare tunnel systemd units
+- Enables UFW firewall (unlike Rahma/Cremat which leave it off)
+- Hardens SSH: key-only auth, no passwords
+- Sets up Let's Encrypt with Cloudflare DNS-01
+
+### 4. Configure Cloudflare Tunnels (on VPS)
+
+```bash
+# SSH to VPS (via lab network or after bootstrap)
+ssh ec2-user@192.168.2.50
+
+# Login and create tunnels
+cloudflared tunnel login
+cloudflared tunnel create jeeb-http
+cloudflared tunnel create jeeb-ssh
+
+# Note the tunnel IDs and update the config files
+# Then create DNS routes
+cloudflared tunnel route dns jeeb-http jeeb.fds-1.com
+cloudflared tunnel route dns jeeb-http '*.jeeb.fds-1.com'
+cloudflared tunnel route dns jeeb-ssh ssh.jeeb.fds-1.com
+
+# Update config files with tunnel IDs
+# /home/ec2-user/.cloudflared/jeeb-http.yml
+# /home/ec2-user/.cloudflared/jeeb-ssh.yml
+
+# Start tunnels
+sudo systemctl start cloudflare-http-tunnel cloudflare-ssh-tunnel
+```
+
+### 5. Obtain SSL Certificate
+
+```bash
+ssh ec2-user@192.168.2.50
+sudo certbot certonly --dns-cloudflare \
+  --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+  -d jeeb.fds-1.com -d '*.jeeb.fds-1.com' \
+  --agree-tos --non-interactive --email admin@jeeb.fds-1.com
+
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### 6. Store Secrets in GitHub
+
+```bash
+# From your laptop
+cat jeeb-deploy-key | base64 | gh secret set JEEB_SSH_PRIVATE_KEY -R olivium-dev/jeeb-infrastructure
+
+echo "ssh.jeeb.fds-1.com" | gh secret set JEEB_SSH_HOST -R olivium-dev/jeeb-infrastructure
+echo "ec2-user" | gh secret set JEEB_DEPLOY_USER -R olivium-dev/jeeb-infrastructure
+
+cat cf-token.txt | gh secret set CF_API_TOKEN -R olivium-dev/jeeb-infrastructure
+
+# Production environment
+echo "jeeb.fds-1.com" | gh secret set PRODUCTION_DOMAIN -R olivium-dev/jeeb-infrastructure
+echo "https://jeeb.fds-1.com" | gh variable set PRODUCTION_URL -R olivium-dev/jeeb-infrastructure
+```
+
+Delete the local key file after storing:
+```bash
+rm -f jeeb-deploy-key jeeb-deploy-key.pub
+```
+
+## Deploy a Microservice
+
+### First Time (Bootstrap the Service)
+
+```bash
+# GitHub CLI
+gh workflow run swarm-bootstrap-service.yml -R olivium-dev/jeeb-infrastructure \
+  -f service_name=jeeb-gateway \
+  -f published_port=10000 \
+  -f target_port=8080 \
+  -f replicas=2
+```
+
+### Subsequent Deploys (Automatic via jeeb-gateway)
+
+Push to `jeeb-gateway/main`:
+1. `build.yml` builds, tests, pushes `ghcr.io/olivium-dev/jeeb-gateway:<run_id>`
+2. `deploy-staging.yml` calls reusable `swarm-deploy.yml` → VPS
+3. `docker service update --image …:<run_id>` performs rolling update
+4. Health check verifies `/health/live` returns 200
+
+### Manual Production Deploy
+
+```bash
+gh workflow run deploy-production.yml -R olivium-dev/jeeb-gateway \
+  -f image_tag=<run_id> \
+  -f confirm_production=PRODUCTION
+```
+
+Requires approval via GitHub `production` environment.
+
+## Rollback
+
+If a deploy fails the health check, it auto-rolls back. For manual rollback:
+
+```bash
+gh workflow run swarm-rollback.yml -R olivium-dev/jeeb-infrastructure \
+  -f service_name=jeeb-gateway \
+  -f previous_run_id=<previous-run-id> \
+  -f confirm=ROLLBACK
+```
+
+## Monitoring & Observability
+
+The optional monitoring stack (Prometheus + Grafana) is still available in `legacy-compose/docker-compose.monitoring.yml` for local development.
+
+For production monitoring:
+- Swarm built-in: `docker service ps <service>`
+- Health endpoints: `https://jeeb.fds-1.com/health/live`
+- Verify workflow: Run `verify-server.yml` on-demand for diagnostics
+
+## Security Improvements vs. Reference Servers
+
+This implementation closes the gaps identified in the Rahma/Cremat/Saawt analysis:
+
+| Gap | Rahma/Cremat/Saawt | Jeeb (this setup) |
+|-----|-------------------|-------------------|
+| SSH password | `P@ssw0rd768` hardcoded | ed25519 key-only from day one |
+| Firewall | UFW inactive | UFW enabled with proper rules |
+| Cloudflared | Single combined unit (outdated 2025.8.1) | Two separate units (latest) |
+| SSL certs | Mixed DNS-01 + self-signed hack | Clean DNS-01 only |
+| Secrets | On-disk, world-readable | GitHub environment secrets |
+
+## Migration from Old Setup
+
+If you have a previous Traefik-based deployment:
+
+1. **Keep the VPS** — the bootstrap script is idempotent and can upgrade in-place
+2. **Drain the old compose stack**: `docker compose -f legacy-compose/docker-compose.production.yml down`
+3. **Run bootstrap** to ensure nginx, cloudflared, Swarm are configured
+4. **Bootstrap services** via `swarm-bootstrap-service.yml`
+5. **Update nginx** via `deploy-nginx.yml` to add the location blocks
+6. **Delete old compose** once verified working
+
+The legacy compose files are preserved under `legacy-compose/` for local development parity.
+
+## Troubleshooting
+
+### SSH Connection Fails in GitHub Actions
+
+1. Check Cloudflare tunnel is running: `sudo systemctl status cloudflare-ssh-tunnel`
+2. Verify SSH key: `ssh -o ProxyCommand='cloudflared access tcp --hostname ssh.jeeb.fds-1.com' ec2-user@localhost`
+3. Check `JEEB_SSH_PRIVATE_KEY` is base64-encoded in GitHub secrets
+
+### Nginx Config Test Fails
+
+1. Run `verify-server.yml` to see nginx error log
+2. Check SSL certificates exist: `sudo certbot certificates`
+3. Test locally: `sudo nginx -t`
+
+### Swarm Service Won't Start
+
+1. Check image exists in GHCR: `docker manifest inspect ghcr.io/olivium-dev/<service>:<tag>`
+2. Check VPS can reach GHCR: `docker pull ghcr.io/olivium-dev/<service>:<tag>`
+3. View service logs: `docker service ps <service>` and `docker service logs <service>`
+
+## Related Repositories
+
+- `olivium-dev/jeeb-gateway` — BFF/gateway service (.NET 8)
+- `olivium-dev/jeeb-admin` — Admin panel (React + Vite)
+- `olivium-dev/jeeb-mobile` — Flutter app
+- `olivium-dev/jeeb-infrastructure` — This repo (deployment infrastructure)

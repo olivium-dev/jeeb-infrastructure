@@ -158,39 +158,45 @@ jobs:
       - name: Verify deployment
         run: |
           echo "==> Verifying deployment..."
-          
+
           SERVICE_NAME="${{ inputs.service_name }}"
           MAX_WAIT=180
           START_TIME=$(date +%s)
-          
+
           while true; do
-            STATUS=$(ssh jeeb-vps "docker service inspect --format='{{.UpdateStatus.State}}' ${SERVICE_NAME} 2>/dev/null || echo 'unknown'")
-            
+            STATUS=$(ssh jeeb-vps "docker service inspect ${SERVICE_NAME} 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin)[0]; us=d.get('UpdateStatus',{}); print(us.get('State','no-update') if us else 'no-update')\"" 2>/dev/null || echo 'unknown')
+
             echo "Update status: $STATUS"
-            
-            if [ "$STATUS" = "completed" ]; then
-              echo "✓ Service update completed successfully"
+
+            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "no-update" ]; then
+              echo "✓ Service is healthy (status: $STATUS)"
               break
             elif [ "$STATUS" = "paused" ] || [ "$STATUS" = "rollback_started" ]; then
               echo "✗ Service update failed or rolling back"
               ssh jeeb-vps "docker service ps --no-trunc ${SERVICE_NAME} | head -20"
               exit 1
             fi
-            
+
             CURRENT_TIME=$(date +%s)
             ELAPSED=$((CURRENT_TIME - START_TIME))
-            
+
             if [ $ELAPSED -ge $MAX_WAIT ]; then
               echo "✗ Timeout waiting for service update"
               ssh jeeb-vps "docker service ps --no-trunc ${SERVICE_NAME} | head -20"
               exit 1
             fi
-            
+
             echo "  Waiting... (${ELAPSED}s / ${MAX_WAIT}s)"
             sleep 5
           done
-          
-          # Final verification
+
+          REPLICAS=$(ssh jeeb-vps "docker service ls --filter name=${SERVICE_NAME} --format '{{.Replicas}}'")
+          echo "Replicas: $REPLICAS"
+          if echo "$REPLICAS" | grep -q "0/"; then
+            echo "✗ No running replicas"
+            exit 1
+          fi
+
           echo ""
           echo "Final service status:"
           ssh jeeb-vps "

@@ -48,16 +48,49 @@ jobs:
       url: ${{ vars.PRODUCTION_URL }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Install cloudflared
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
+          cloudflared --version
 
       - name: Setup Cloudflare SSH
-        uses: ./.github/actions/cloudflare-ssh
-        with:
-          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
-          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
-          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
-          retries: '3'
+        env:
+          SSH_HOST: ${{ secrets.JEEB_SSH_HOST }}
+          SSH_USER: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          SSH_PRIVATE_KEY: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+
+          echo "$SSH_PRIVATE_KEY" | base64 --decode > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          cat > ~/.ssh/config <<EOF
+          Host jeeb-vps
+              HostName $SSH_HOST
+              User $SSH_USER
+              IdentityFile ~/.ssh/id_ed25519
+              StrictHostKeyChecking no
+              UserKnownHostsFile /dev/null
+              ProxyCommand cloudflared access ssh --hostname %h
+              ServerAliveInterval 60
+              ServerAliveCountMax 3
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Test SSH connectivity
+        run: |
+          for i in 1 2 3; do
+            echo "SSH attempt $i/3..."
+            if ssh jeeb-vps "echo 'SSH connection successful' && hostname" 2>&1; then
+              echo "SSH connectivity verified"
+              exit 0
+            fi
+            echo "Attempt $i failed, waiting 10s..."
+            sleep 10
+          done
+          echo "SSH connectivity failed after 3 attempts"
+          exit 1
 
       - name: Verify image exists in GHCR
         run: |

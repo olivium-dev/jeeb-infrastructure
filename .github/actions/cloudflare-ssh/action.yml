@@ -56,7 +56,7 @@ Host jeeb-vps
     IdentityFile ~/.ssh/id_ed25519
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
-    ProxyCommand cloudflared access tcp --hostname %h
+    ProxyCommand cloudflared access ssh --hostname %h
     ServerAliveInterval 60
     ServerAliveCountMax 3
 EOF

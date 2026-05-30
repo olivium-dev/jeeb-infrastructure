@@ -10,7 +10,7 @@ on:
       external_port: { required: true, type: string }
       database_name: { required: false, type: string, default: '' }
       db_conn:       { required: true, type: choice, options: [dotnet, url, mongo, none] }
-      needs_firebase:{ required: false, type: boolean, default: false }
+      needs_firebase: { required: false, type: boolean, default: false }
       needs_jwt:     { required: false, type: boolean, default: false }
       extra_env:     { required: false, type: string, default: '' }
 permissions: { contents: read, packages: read }

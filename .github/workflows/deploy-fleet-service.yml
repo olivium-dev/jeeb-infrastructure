@@ -11,7 +11,7 @@ on:
       internal_port: { required: true, type: string, default: '8080' }
       external_port: { required: true, type: string, default: '10001' }
       database_name: { required: true, type: string, default: jeeb-user-management }
-      needs_firebase:{ required: false, type: string, default: 'true' }
+      needs_firebase: { required: false, type: string, default: 'true' }
       firebase_file: { required: false, type: string, default: 'firebase-admin.json' }
 permissions: { contents: read, packages: read }
 env:

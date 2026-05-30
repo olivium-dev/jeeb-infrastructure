@@ -1,5 +1,8 @@
 name: List Jeeb Services
-on: workflow_dispatch
+on:
+  push:
+    branches: [fix/cloudflare-ssh-action-yaml]
+  workflow_dispatch:
 jobs:
   list:
     runs-on: ubuntu-22.04

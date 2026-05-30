@@ -48,19 +48,22 @@ runs:
         echo "$SSH_PRIVATE_KEY" | base64 --decode > ~/.ssh/id_ed25519
         chmod 600 ~/.ssh/id_ed25519
         
-        # Create SSH config with Cloudflare tunnel ProxyCommand
-        cat > ~/.ssh/config <<EOF
-Host jeeb-vps
-    HostName $SSH_HOST
-    User $SSH_USER
-    IdentityFile ~/.ssh/id_ed25519
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-    ProxyCommand cloudflared access ssh --hostname %h
-    ServerAliveInterval 60
-    ServerAliveCountMax 3
-EOF
-        chmod 600 ~/.ssh/config
+        # Create SSH config with Cloudflare tunnel ProxyCommand.
+        # Built with echo (NOT a column-0 heredoc, which terminates the YAML
+        # block scalar and breaks parsing of this action manifest).
+        {
+          echo "Host jeeb-vps"
+          echo "  HostName $SSH_HOST"
+          echo "  User $SSH_USER"
+          echo "  IdentityFile ~/.ssh/id_ed25519"
+          echo "  StrictHostKeyChecking accept-new"
+          echo "  UserKnownHostsFile ~/.ssh/known_hosts"
+          echo "  ProxyCommand cloudflared access ssh --hostname %h"
+          echo "  ServerAliveInterval 60"
+          echo "  ServerAliveCountMax 3"
+        } > ~/.ssh/config
+        touch ~/.ssh/known_hosts
+        chmod 600 ~/.ssh/config ~/.ssh/known_hosts
         
         echo "    SSH config created with Cloudflare tunnel: $SSH_HOST"
 

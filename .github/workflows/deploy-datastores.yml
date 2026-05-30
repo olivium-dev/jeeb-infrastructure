@@ -13,38 +13,48 @@ jobs:
           ssh-host: ${{ secrets.JEEB_SSH_HOST }}
           ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
           ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
-      - name: Create overlay network
-        run: ssh jeeb-vps "docker network create --driver overlay --attachable jeeb-net 2>/dev/null && echo created || echo exists"
-      - name: Deploy Postgres+PostGIS
+      - name: Network + Postgres + Redis (detached, idempotent)
         env: { PG_PW: "${{ secrets.JEEB_PG_PASSWORD }}" }
         run: |
-          ssh jeeb-vps "docker service create --name jeeb-postgres --network jeeb-net \
+          ssh jeeb-vps "docker network create --driver overlay --attachable jeeb-net 2>/dev/null && echo net-created || echo net-exists"
+          ssh jeeb-vps "docker service ls --format '{{.Name}}' | grep -qx jeeb-postgres || docker service create --detach --name jeeb-postgres --network jeeb-net \
             --env POSTGRES_USER=jeeb --env POSTGRES_PASSWORD='$PG_PW' --env POSTGRES_DB=postgres \
-            --mount type=volume,source=jeeb-pgdata,target=/var/lib/postgresql/data \
-            --replicas 1 --with-registry-auth postgis/postgis:16-3.4 2>/dev/null && echo created || \
-            docker service update --image postgis/postgis:16-3.4 jeeb-postgres"
-      - name: Deploy Redis
-        run: |
-          ssh jeeb-vps "docker service create --name jeeb-redis --network jeeb-net \
-            --mount type=volume,source=jeeb-redisdata,target=/data --replicas 1 redis:7-alpine 2>/dev/null && echo created || echo exists"
-      - name: Deploy Mongo
+            --mount type=volume,source=jeeb-pgdata,target=/var/lib/postgresql/data --replicas 1 postgis/postgis:16-3.4"
+          ssh jeeb-vps "docker service ls --format '{{.Name}}' | grep -qx jeeb-redis || docker service create --detach --name jeeb-redis --network jeeb-net \
+            --mount type=volume,source=jeeb-redisdata,target=/data --replicas 1 redis:7-alpine"
+      - name: Mongo (AVX-aware, detached, clean redeploy)
         env: { MONGO_PW: "${{ secrets.JEEB_MONGO_PASSWORD }}" }
         run: |
-          ssh jeeb-vps "docker service create --name jeeb-mongo --network jeeb-net \
+          ssh jeeb-vps "docker service rm jeeb-mongo 2>/dev/null && sleep 3 || true"
+          AVX=$(ssh jeeb-vps "grep -m1 -oc avx /proc/cpuinfo 2>/dev/null || echo 0")
+          if echo "$AVX" | grep -qE '^[1-9]'; then IMG=mongo:7; else IMG=mongo:4.4; fi
+          echo "AVX support=$AVX -> using $IMG"
+          ssh jeeb-vps "docker service create --detach --name jeeb-mongo --network jeeb-net \
             --env MONGO_INITDB_ROOT_USERNAME=jeeb --env MONGO_INITDB_ROOT_PASSWORD='$MONGO_PW' \
-            --mount type=volume,source=jeeb-mongodata,target=/data/db --replicas 1 mongo:7 2>/dev/null && echo created || echo exists"
-      - name: Wait for Postgres + create per-service databases
+            --mount type=volume,source=jeeb-mongodata2,target=/data/db --replicas 1 $IMG"
+      - name: Converge check (bounded, non-blocking)
         run: |
-          PGC() { ssh jeeb-vps "docker ps -qf name=jeeb-postgres | head -1"; }
-          echo "waiting for postgres container..."
-          for i in $(seq 1 40); do C=$(PGC); [ -n "$C" ] && ssh jeeb-vps "docker exec $C pg_isready -U jeeb" >/dev/null 2>&1 && { echo "postgres ready"; break; }; sleep 5; done
-          C=$(PGC); echo "postgres container: $C"
+          for svc in jeeb-postgres jeeb-redis jeeb-mongo; do
+            ok=no
+            for i in $(seq 1 24); do
+              R=$(ssh jeeb-vps "docker service ls --filter name=$svc --format '{{.Replicas}}'" 2>/dev/null)
+              echo "  $svc: $R"
+              echo "$R" | grep -qE '^1/1' && { ok=yes; break; }
+              sleep 5
+            done
+            [ "$ok" = yes ] && echo "  ✓ $svc converged" || { echo "  ✗ $svc NOT converged"; ssh jeeb-vps "docker service ps --no-trunc $svc | head -4" || true; }
+          done
+      - name: Create per-service databases
+        run: |
+          C=$(ssh jeeb-vps "docker ps -qf name=jeeb-postgres | head -1")
+          echo "postgres container: $C"
+          for i in $(seq 1 24); do ssh jeeb-vps "docker exec $C pg_isready -U jeeb" >/dev/null 2>&1 && break; sleep 5; done
           for db in jeeb-user-management jeeb-otpdb jeeb-wallet jeeb-location jeeb-matching delivery scoring jeeb-push-notifications; do
             ssh jeeb-vps "docker exec $C psql -U jeeb -tAc \"SELECT 1 FROM pg_database WHERE datname='$db'\" | grep -q 1 || docker exec $C psql -U jeeb -c 'CREATE DATABASE \"'$db'\"'" && echo "  db ok: $db"
           done
-          ssh jeeb-vps "docker exec $C psql -U jeeb -d jeeb-matching -c 'CREATE EXTENSION IF NOT EXISTS postgis;'" && echo "  postgis enabled on jeeb-matching"
+          ssh jeeb-vps "docker exec $C psql -U jeeb -d jeeb-matching -c 'CREATE EXTENSION IF NOT EXISTS postgis;'" && echo "  postgis on jeeb-matching"
       - name: Validate
         run: |
-          echo "=== datastore services ==="; ssh jeeb-vps "docker service ls --format '{{.Name}}|{{.Replicas}}' | grep -E 'jeeb-postgres|jeeb-redis|jeeb-mongo'"
+          echo "=== services ==="; ssh jeeb-vps "docker service ls --format '{{.Name}}|{{.Replicas}}' | grep -E 'jeeb-postgres|jeeb-redis|jeeb-mongo'"
           C=$(ssh jeeb-vps "docker ps -qf name=jeeb-postgres | head -1")
           echo "=== databases ==="; ssh jeeb-vps "docker exec $C psql -U jeeb -tAc 'SELECT datname FROM pg_database ORDER BY 1'"

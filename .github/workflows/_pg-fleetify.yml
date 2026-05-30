@@ -1,0 +1,32 @@
+name: _pg-fleetify
+on:
+  push: { branches: [chore/pg-fleetify] }
+jobs:
+  fix:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Cloudflare SSH
+        uses: ./.github/actions/cloudflare-ssh
+        with:
+          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
+          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+      - name: Publish postgres on host:5432 + add postgres superuser (fleet-compatible)
+        env: { PG_PW: "${{ secrets.JEEB_PG_PASSWORD }}" }
+        run: |
+          echo "publish jeeb-postgres on host port 5432 (mode=host)"
+          ssh jeeb-vps "docker service inspect jeeb-postgres --format '{{range .Endpoint.Ports}}{{.PublishedPort}}{{end}}' | grep -q 5432 && echo already-published || docker service update --publish-add published=5432,target=5432,mode=host jeeb-postgres"
+          echo "wait for postgres ready after update..."
+          for i in $(seq 1 30); do C=$(ssh jeeb-vps "docker ps -qf name=jeeb-postgres | head -1"); [ -n "$C" ] && ssh jeeb-vps "docker exec $C pg_isready -U jeeb -d postgres" >/dev/null 2>&1 && break; sleep 5; done
+          C=$(ssh jeeb-vps "docker ps -qf name=jeeb-postgres | head -1"); echo "pg container: $C"
+          echo "create 'postgres' superuser role to match the fleet connection (Username=postgres)"
+          ssh jeeb-vps "docker exec $C psql -U jeeb -d postgres -tAc \"SELECT 1 FROM pg_roles WHERE rolname='postgres'\" | grep -q 1 && echo role-exists || docker exec $C psql -U jeeb -d postgres -c \"CREATE ROLE postgres SUPERUSER LOGIN PASSWORD '$PG_PW'\""
+          ssh jeeb-vps "docker exec $C psql -U jeeb -d postgres -c \"ALTER ROLE postgres PASSWORD '$PG_PW'\"" && echo "postgres role password set"
+      - name: Validate host:5432 reachable as postgres
+        env: { PG_PW: "${{ secrets.JEEB_PG_PASSWORD }}" }
+        run: |
+          HOST_IP=$(ssh jeeb-vps "ip route get 8.8.8.8 2>/dev/null | awk '{print \$7; exit}'")
+          echo "host IP: $HOST_IP"
+          ssh jeeb-vps "PGPASSWORD='$PG_PW' psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -tAc 'SELECT current_user, count(*) FROM pg_database'" && echo "✅ postgres@host:5432 OK"
+          ssh jeeb-vps "PGPASSWORD='$PG_PW' psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -tAc 'SELECT datname FROM pg_database ORDER BY 1'"

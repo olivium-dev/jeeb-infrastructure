@@ -48,13 +48,17 @@ jobs:
         run: |
           C=$(ssh jeeb-vps "docker ps -qf name=jeeb-postgres | head -1")
           echo "postgres container: $C"
-          for i in $(seq 1 24); do ssh jeeb-vps "docker exec $C pg_isready -U jeeb" >/dev/null 2>&1 && break; sleep 5; done
+          for i in $(seq 1 24); do ssh jeeb-vps "docker exec $C pg_isready -U jeeb -d postgres" >/dev/null 2>&1 && break; sleep 5; done
           for db in jeeb-user-management jeeb-otpdb jeeb-wallet jeeb-location jeeb-matching delivery scoring jeeb-push-notifications; do
-            ssh jeeb-vps "docker exec $C psql -U jeeb -tAc \"SELECT 1 FROM pg_database WHERE datname='$db'\" | grep -q 1 || docker exec $C psql -U jeeb -c 'CREATE DATABASE \"'$db'\"'" && echo "  db ok: $db"
+            if ssh jeeb-vps "docker exec $C psql -U jeeb -d postgres -tAc \"SELECT 1 FROM pg_database WHERE datname='$db'\"" 2>/dev/null | grep -q 1; then
+              echo "  exists: $db"
+            else
+              ssh jeeb-vps "docker exec $C psql -U jeeb -d postgres -c 'CREATE DATABASE \"$db\"'" && echo "  created: $db" || echo "  FAILED: $db"
+            fi
           done
           ssh jeeb-vps "docker exec $C psql -U jeeb -d jeeb-matching -c 'CREATE EXTENSION IF NOT EXISTS postgis;'" && echo "  postgis on jeeb-matching"
       - name: Validate
         run: |
           echo "=== services ==="; ssh jeeb-vps "docker service ls --format '{{.Name}}|{{.Replicas}}' | grep -E 'jeeb-postgres|jeeb-redis|jeeb-mongo'"
           C=$(ssh jeeb-vps "docker ps -qf name=jeeb-postgres | head -1")
-          echo "=== databases ==="; ssh jeeb-vps "docker exec $C psql -U jeeb -tAc 'SELECT datname FROM pg_database ORDER BY 1'"
+          echo "=== databases ==="; ssh jeeb-vps "docker exec $C psql -U jeeb -d postgres -tAc 'SELECT datname FROM pg_database ORDER BY 1'"

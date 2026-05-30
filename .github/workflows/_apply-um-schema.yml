@@ -1,0 +1,20 @@
+name: _apply-um-schema
+on: { push: { branches: [feat/services] } }
+jobs:
+  apply:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Cloudflare SSH
+        uses: ./.github/actions/cloudflare-ssh
+        with:
+          ssh-host: ${{ secrets.JEEB_SSH_HOST }}
+          ssh-user: ${{ secrets.JEEB_DEPLOY_USER || 'ec2-user' }}
+          ssh-private-key: ${{ secrets.JEEB_SSH_PRIVATE_KEY }}
+      - name: Apply user-management schema to jeeb-user-management
+        run: |
+          C=$(ssh jeeb-vps "docker ps -qf name=jeeb-postgres | head -1")
+          echo "applying schema to jeeb-user-management (container $C)..."
+          cat db/user-management-schema.sql | ssh jeeb-vps "docker exec -i $C psql -U postgres -d jeeb-user-management -v ON_ERROR_STOP=1"
+          echo "=== tables now ==="
+          ssh jeeb-vps "docker exec $C psql -U postgres -d jeeb-user-management -tAc \"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY 1\""

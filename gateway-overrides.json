@@ -1,0 +1,67 @@
+{
+  "FeatureFlags": {
+    "UseUpstream": {
+      "Auth": true,
+      "Delivery": true,
+      "Geolocation": true,
+      "Chat": true,
+      "Wallet": true,
+      "Notification": true,
+      "PushNotification": true,
+      "Push": true,
+      "ScoreTaking": true,
+      "UserManagement": true
+    }
+  },
+
+  "Redis": {
+    "ConnectionString": "redis:6379"
+  },
+
+  "_comment_binding": "Two live binding contracts exist in JeebGateway: (1) NSwag/hand-typed clients bind Services:<Svc>:BaseUrl via ServiceClientExtensions.BindBaseAddress; (2) the *ProxyController family binds Service<Svc>Api:BaseUrl; and (3) ServiceConfigValidationExtensions throws at startup if a Service*Api:BaseUrl is missing while its UseUpstream flag is on. The Service*Api keys are therefore NOT vestigial and must NOT be removed.",
+
+  "Services": {
+    "Auth":             { "BaseUrl": "http://192.168.2.50:10061/" },
+    "Chat":             { "BaseUrl": "http://chat-service:8080/" },
+    "UserManagement":   { "BaseUrl": "http://user-management:8080/" },
+    "Wallet":           { "BaseUrl": "http://wallet-service:8080/" },
+    "Matching":         { "BaseUrl": "http://delivery-service:8080/" },
+    "Notification":     { "BaseUrl": "http://notification-service:8000/" },
+    "Geolocation":      { "BaseUrl": "http://192.168.2.50:10060/" },
+    "PushNotification": { "BaseUrl": "http://push-notification:8080/" },
+    "Delivery":         { "BaseUrl": "http://delivery-service:8080/" },
+    "ScoreTaking":      { "BaseUrl": "http://score-taking-service:8080/" },
+    "ServiceOTP":       { "BaseUrl": "http://user-management:8080/" },
+
+    "_comment_hostport": "2026-06-01 Jeeb backend batch — all 7 now LIVE on host 192.168.2.50 (verified reachable). Geolocation + Auth have gateway typed clients (Services:<Svc>:BaseUrl). Offer/Ban/Voice/Feedback/UnifiedPayment are consumed via *ProxyController (Service<Svc>Api:BaseUrl below). Health paths: geo/offer/ban/UPG=/health, voice=/healthz (FastAPI), auth(.NET5)+feedback(.NET8) have no /health route -> liveness via /swagger/v1/swagger.json.",
+    "Offer":            { "BaseUrl": "http://192.168.2.50:10063/" },
+    "Ban":              { "BaseUrl": "http://192.168.2.50:10065/" },
+    "VoiceTranscription": { "BaseUrl": "http://192.168.2.50:10062/" },
+    "Feedback":         { "BaseUrl": "http://192.168.2.50:10064/" },
+    "UnifiedPayment":   { "BaseUrl": "http://192.168.2.50:10066/" }
+  },
+
+  "UserManagementApi": {
+    "BaseUrl": "http://user-management:8080/"
+  },
+  "ServiceOTPApi": {
+    "BaseUrl": "http://user-management:8080/"
+  },
+
+  "ServiceChatApi":                 { "BaseUrl": "http://chat-service:8080/" },
+  "ServiceWalletApi":               { "BaseUrl": "http://wallet-service:8080/" },
+  "ServiceNotificationApi":         { "BaseUrl": "http://notification-service:8000/" },
+  "ServiceGeolocationApi":          { "BaseUrl": "http://192.168.2.50:10060/" },
+  "ServicePushNotificationApi":     { "BaseUrl": "http://push-notification:8080/" },
+  "ServiceOfferApi":                { "BaseUrl": "http://192.168.2.50:10063/" },
+  "ServiceScoreTakingApi":          { "BaseUrl": "http://score-taking-service:8080/" },
+  "ServiceBanApi":                  { "BaseUrl": "http://192.168.2.50:10065/" },
+  "ServiceComplimentApi":           { "BaseUrl": "http://compliment-service:6070/" },
+  "ServiceContractSigningApi":      { "BaseUrl": "http://contract-signing-service:8000/" },
+  "ServiceVoiceTranscriptionApi":   { "BaseUrl": "http://192.168.2.50:10062/" },
+  "ServiceFormBuilderApi":          { "BaseUrl": "http://form-builder-service:8000/" },
+  "ServiceFeedbackApi":             { "BaseUrl": "http://192.168.2.50:10064/" },
+  "ServiceRealtimeApi":             { "BaseUrl": "http://realtime-comunication-service:4000/" },
+  "ServiceDeliveryApi":             { "BaseUrl": "http://delivery-service:8080/" },
+  "ServiceUnifiedPaymentGatewayApi":{ "BaseUrl": "http://192.168.2.50:10066/" }
+}

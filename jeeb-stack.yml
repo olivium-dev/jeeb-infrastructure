@@ -1,0 +1,462 @@
+version: "3.8"
+
+networks:
+  jeeb-overlay:
+    driver: overlay
+    attachable: true
+
+volumes:
+  pg-data:
+  redis-data:
+
+services:
+
+  # ══════════════════════════════════════════
+  #  Shared infrastructure
+  # ══════════════════════════════════════════
+
+  postgres:
+    image: jeeb/postgres-postgis:local
+    networks: [jeeb-overlay]
+    ports: ["15432:5432"]
+    environment:
+      POSTGRES_USER: jeeb
+      POSTGRES_PASSWORD: jeeb-local-smoke-2026
+      POSTGRES_DB: jeeb
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jeeb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any }
+
+  redis:
+    image: redis:7-alpine
+    networks: [jeeb-overlay]
+    ports: ["16379:6379"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any }
+
+  mongo:
+    image: mongo:7
+    networks: [jeeb-overlay]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any }
+
+  # ══════════════════════════════════════════
+  #  jeeb-gateway  (BFF)
+  # ══════════════════════════════════════════
+
+  jeeb-gateway:
+    image: jeeb/jeeb-gateway:local
+    networks: [jeeb-overlay]
+    ports: ["10000:8080"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=jeeb;Username=jeeb;Password=jeeb-local-smoke-2026"
+      Jwt__SigningKey: "c21va2UtdGVzdC1vbmx5LWtleS10aGlzLWlzLW5vdC1mb3ItcHJvZHVjdGlvbi1hbmQtbXVzdC1iZS1hdC1sZWFzdC02NC1ieXRlcw=="
+      Jwt__Issuer: "jeeb-gateway"
+      Jwt__Audience: "jeeb-clients"
+      JeebJwt__SigningKey: "c21va2UtdGVzdC1vbmx5LWplZWItb3RwLXNpZ25pbmcta2V5LW11c3QtYmUtYXQtbGVhc3Qtc2l4dHktZm91ci1ieXRlcy1sb25n"
+      JeebJwt__PhonePepper: "c21va2UtdGVzdC1waG9uZS1wZXBwZXItMzItYnl0ZXM="
+      Redis__ConnectionString: "redis:6379"
+      GatewayRateLimit__RedisConnectionString: "redis:6379"
+    configs:
+      - source: gateway-overrides
+        target: /app/appsettings.Swarm.json
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/live || exit 0"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    depends_on: [postgres, redis]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  # ══════════════════════════════════════════
+  #  Microservices
+  # ══════════════════════════════════════════
+
+  user-management:
+    image: jeeb/user-management:local
+    networks: [jeeb-overlay]
+    ports: ["10001:8080"]
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=jeeb;Username=jeeb;Password=jeeb-local-smoke-2026"
+      Jwt__SigningKey: "c21va2UtdGVzdC1vbmx5LWtleS10aGlzLWlzLW5vdC1mb3ItcHJvZHVjdGlvbi1hbmQtbXVzdC1iZS1hdC1sZWFzdC02NC1ieXRlcw=="
+      FIREBASE_CONFIG_PATH: "/app/jaicker-app-firebase.json"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 0"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  geolocation-service:
+    image: jeeb/geolocation-service:local
+    networks: [jeeb-overlay]
+    ports: ["10006:8000"]
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://jeeb:jeeb-local-smoke-2026@postgres:5432/jeeb"
+      REDIS_URL: redis://redis:6379
+      GOOGLE_MAPS_API_KEY: "${GOOGLE_MAPS_API_KEY:-}"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    depends_on: [postgres, redis]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  chat-service:
+    image: jeeb/chat-service:local
+    networks: [jeeb-overlay]
+    ports: ["10028:8080"]
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=jeeb;Username=jeeb;Password=jeeb-local-smoke-2026"
+      Jwt__SigningKey: "c21va2UtdGVzdC1vbmx5LWtleS10aGlzLWlzLW5vdC1mb3ItcHJvZHVjdGlvbi1hbmQtbXVzdC1iZS1hdC1sZWFzdC02NC1ieXRlcw=="
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/health/check || exit 0"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  wallet-service:
+    image: jeeb/wallet-service:local
+    networks: [jeeb-overlay]
+    ports: ["10014:8080"]
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=jeeb;Username=jeeb;Password=jeeb-local-smoke-2026"
+      Jwt__SigningKey: "c21va2UtdGVzdC1vbmx5LWtleS10aGlzLWlzLW5vdC1mb3ItcHJvZHVjdGlvbi1hbmQtbXVzdC1iZS1hdC1sZWFzdC02NC1ieXRlcw=="
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 0"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  notification-service:
+    image: jeeb/notification-service:local
+    networks: [jeeb-overlay]
+    ports: ["10026:8000"]
+    environment:
+      MONGODB_CONNECTION_STRING: "mongodb://mongo:27017/jeeb_notifications"
+      REDIS_URL: redis://redis:6379
+      MONGO_HOST: mongo
+      MONGO_PORT: "27017"
+      MONGO_DB: jeeb_notifications
+      SKIP_DB_CHECK: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    depends_on: [postgres, redis]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  push-notification:
+    image: jeeb/push-notification:local
+    networks: [jeeb-overlay]
+    ports: ["10040:8080"]
+    environment:
+      DATABASE_URL: "postgresql://jeeb:jeeb-local-smoke-2026@postgres:5432/jeeb"
+      REDIS_URL: redis://redis:6379
+      GOOGLE_APPLICATION_CREDENTIALS: "/app/firebase-admin.json"
+    configs:
+      - source: firebase-creds
+        target: /app/firebase-admin.json
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    depends_on: [postgres, redis]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  score-taking-service:
+    image: jeeb/score-taking-service:local
+    networks: [jeeb-overlay]
+    ports: ["10009:8080"]
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=scoring;Username=jeeb;Password=jeeb-local-smoke-2026"
+      Jwt__Key: "e71QNnRRoucQNry3iHnUhIo7pBE3J0NH"
+      Jwt__Issuer: "user-management"
+      Jwt__Audience: "user-management"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 0"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  offer-service:
+    image: jeeb/offer-service:local
+    networks: [jeeb-overlay]
+    ports: ["10007:4040"]
+    environment:
+      DATABASE_URL: "ecto://jeeb:jeeb-local-smoke-2026@postgres:5432/jeeb"
+      SECRET_KEY_BASE: "c21va2UtdGVzdC1zZWNyZXQta2V5LWJhc2UtbXVzdC1iZS1hdC1sZWFzdC02NC1ieXRlcy1sb25nLWZvci1waG9lbml4LXNlc3Npb25z"
+      PHX_SERVER: "true"
+      PORT: "4040"
+      CHAT_SERVICE_URL: "http://chat-service:8080"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:8000"
+      INTERNAL_SERVICE_TOKEN: "smoke-test-internal-service-token"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:4040/health || exit 0"]
+      interval: 15s
+      timeout: 5s
+      start_period: 45s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  realtime-comunication-service:
+    image: jeeb/realtime-comunication-service:local
+    networks: [jeeb-overlay]
+    ports: ["10008:4000"]
+    environment:
+      DATABASE_URL: "ecto://jeeb:jeeb-local-smoke-2026@postgres:5432/jeeb"
+      SECRET_KEY_BASE: "c21va2UtdGVzdC1zZWNyZXQta2V5LWJhc2UtbXVzdC1iZS1hdC1sZWFzdC02NC1ieXRlcy1sb25nLWZvci1waG9lbml4LXNlc3Npb25z"
+      GUARDIAN_SECRET_KEY: "c21va2UtdGVzdC1ndWFyZGlhbi1zZWNyZXQtNjQtYnl0ZXMtbG9uZy1mb3ItaHMyNTYtdG9rZW5z"
+      REDIS_URL: redis://redis:6379
+      PHX_SERVER: "true"
+      PORT: "4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:4000/ || exit 0"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    depends_on: [postgres, redis]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  compliment-service:
+    image: jeeb/compliment-service:local
+    networks: [jeeb-overlay]
+    ports: ["10036:6070"]
+    environment:
+      DATABASE_URL: "postgresql://jeeb:jeeb-local-smoke-2026@postgres:5432/jeeb"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:6070/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  contract-signing-service:
+    image: jeeb/contract-signing-service:local
+    networks: [jeeb-overlay]
+    ports: ["10011:8000"]
+    environment:
+      DATABASE_URL: "postgresql://jeeb:jeeb-local-smoke-2026@postgres:5432/jeeb"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  feedback-service:
+    image: jeeb/feedback-service:local
+    networks: [jeeb-overlay]
+    ports: ["10020:8080"]
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__FeedbackDbContext: "Host=postgres;Port=5432;Database=jeeb;Username=jeeb;Password=jeeb-local-smoke-2026"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=jeeb;Username=jeeb;Password=jeeb-local-smoke-2026"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/swagger/v1/swagger.json || exit 0"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 10s }
+      update_config: { order: start-first }
+
+  form-builder-service:
+    image: jeeb/form-builder-service:local
+    networks: [jeeb-overlay]
+    ports: ["10032:8000"]
+    environment:
+      DATABASE_URL: "postgresql://jeeb:jeeb-local-smoke-2026@postgres:5432/jeeb"
+      TEMPLATE_JSON_FILES: "jeeb_kyc_form_builder.json"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/templates')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  voice-transcription-service:
+    image: jeeb/voice-transcription-service:local
+    networks: [jeeb-overlay]
+    ports: ["10010:8080"]
+    environment:
+      DATABASE_URL: "postgresql://jeeb:jeeb-local-smoke-2026@postgres:5432/jeeb"
+      REDIS_URL: redis://redis:6379
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health/live')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  ban-service:
+    image: jeeb/ban-service:local
+    networks: [jeeb-overlay]
+    ports: ["10042:3000"]
+    environment:
+      DATABASE_URL: "postgres://jeeb:jeeb-local-smoke-2026@postgres:5432/jeeb"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  delivery-service:
+    image: jeeb/delivery-service:local
+    networks: [jeeb-overlay]
+    ports: ["10005:8080"]
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://jeeb:jeeb-local-smoke-2026@postgres:5432/delivery"
+      REDIS_URL: redis://redis:6379/0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on: [postgres, redis]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+  unified-payment-gateway:
+    image: jeeb/unified-payment-gateway:local
+    networks: [jeeb-overlay]
+    ports: ["10016:4000"]
+    environment:
+      DATABASE_URL: "ecto://jeeb:jeeb-local-smoke-2026@postgres:5432/payments"
+      SECRET_KEY_BASE: "c21va2UtdGVzdC1zZWNyZXQta2V5LWJhc2UtbXVzdC1iZS1hdC1sZWFzdC02NC1ieXRlcy1sb25nLWZvci1waG9lbml4LXNlc3Npb25z"
+      PHX_HOST: localhost
+      PHX_SERVER: "true"
+      PORT: "4000"
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:10000"
+      INTERNAL_API_KEY: "smoke-test-internal-api-key"
+      MYFATOORAH_BASE_URL: "https://apitest.myfatoorah.com"
+      MYFATOORAH_API_KEY: "smoke-test-myfatoorah-key"
+      WALLET_WEBHOOK_URL: "http://wallet-service:8080/api/wallet/webhook"
+      ADMIN_API_KEY: "smoke-test-admin-api-key"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:4000/healthz || exit 0"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    depends_on: [postgres]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      update_config: { order: start-first }
+
+configs:
+  gateway-overrides:
+    file: ./gateway-overrides.json
+  firebase-creds:
+    file: ./firebase-admin-dummy.json

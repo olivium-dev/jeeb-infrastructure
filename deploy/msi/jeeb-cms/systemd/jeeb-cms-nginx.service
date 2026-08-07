@@ -1,0 +1,18 @@
+[Unit]
+Description=Jeeb CMS loopback nginx container
+Documentation=file:/home/ec2-user/jeeb-cms-hosting/README.md
+Requires=docker.service jeeb-cms-docker-release.service
+After=docker.service jeeb-cms-docker-release.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/home/ec2-user/.config/jeeb-cms/nginx.env
+ExecStart=/home/ec2-user/jeeb-cms-hosting/scripts/docker-nginx.sh boot
+ExecReload=/home/ec2-user/jeeb-cms-hosting/scripts/docker-nginx.sh reload
+ExecStop=/usr/bin/docker container stop jeeb-cms-nginx
+TimeoutStartSec=90
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

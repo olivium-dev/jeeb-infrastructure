@@ -30,7 +30,7 @@ We process the following categories of personal data:
 | Authentication            | OTP history, device ID, login timestamps, IP address                      | Your device           |
 | Location                  | Real-time GPS during a Request, pickup/drop-off addresses                 | Your device           |
 | Transactional             | Request history, ratings, chat messages, voice notes within the Platform  | You + counterparty    |
-| Payment                   | Tokenised card details, bank/wallet payout details (held by payment PSP)  | You via payment PSP   |
+| COD settlement            | Amount, currency, collection and reconciliation status, Jeeber payout destination details if supplied | Request parties / Jeeber |
 | Compliance (Jeebers only) | Licence number, vehicle registration, background-check results            | You + vetting partner |
 | Device & technical        | Device model, OS version, app version, crash logs                         | Your device           |
 
@@ -44,7 +44,7 @@ to ID for Jeeber onboarding) and only with explicit consent.
 We process personal data on the following legal bases:
 
 1. **Performance of a contract** — to provide the Platform, match Clients
-   with Jeebers, process payments, and handle support.
+   with Jeebers, record and reconcile cash-on-delivery, and handle support.
 2. **Legal obligation** — tax records, KYC/AML, response to lawful requests
    from competent authorities.
 3. **Legitimate interests** — fraud prevention, safety, service improvement,
@@ -59,7 +59,7 @@ We use personal data to:
 
 - create and authenticate accounts;
 - match Clients with available Jeebers and route Requests;
-- compute pricing, take payment, and pay out Jeebers;
+- compute pricing, record cash collection, reconcile COD, and settle amounts owed to Jeebers;
 - enable chat, voice, and rating between counterparties;
 - enforce the Terms of Service and Prohibited Items Policy;
 - prevent fraud, abuse, and unsafe behaviour;
@@ -77,7 +77,6 @@ We share personal data only as follows:
 | Recipient                              | Purpose                                          |
 | -------------------------------------- | ------------------------------------------------ |
 | The counterparty to a Request           | Name and (limited) contact for delivery hand-off |
-| Payment service providers               | Process payments and payouts                     |
 | Background-check and KYC providers      | Verify Jeeber eligibility                        |
 | Cloud infrastructure providers          | Host and operate the Platform                    |
 | Customer-support tooling                | Resolve in-app tickets                           |
@@ -122,7 +121,7 @@ which it was collected and to meet legal obligations:
 | ---------------------------- | --------------------------------------------------------- |
 | Active account data          | Duration of the account                                   |
 | Request history (operational) | 24 months after the last Request                          |
-| Payment and tax records      | As required by tax law (typically 7 years)                |
+| COD settlement and tax records | As required by tax law (typically 7 years)              |
 | Chat and voice messages      | 90 days from the end of the Request, then deleted         |
 | KYC / background-check       | As required by AML regulation (typically 5 years)         |
 | Crash and technical logs     | 90 days                                                   |

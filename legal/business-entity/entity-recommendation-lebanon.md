@@ -15,8 +15,8 @@ as amended), registered with the Beirut Commercial Register
 
 | Form                      | Verdict   | Rationale                                                                                                                                                |
 | ------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **SAL** (Joint-Stock)     | RECOMMEND | Required if Jeeb ever (a) raises external capital, (b) lists or transfers shares freely, (c) holds a banking-adjacent license, or (d) onboards a PSP that requires SAL counterparties. Mandatory board + statutory auditor add governance the platform needs by Series-A. |
-| **SARL** (Limited)        | Reject for go-forward; usable for a 6–12 month MVP only | Cheaper to set up but capped at 20 partners, share transfers require partner consent, and most Lebanese PSPs / acquiring banks will not contract with a SARL above a small monthly volume. Conversion SARL→SAL is non-trivial (notary, re-registration, re-stamping). |
+| **SAL** (Joint-Stock)     | RECOMMEND | Suitable if Jeeb raises external capital, lists or transfers shares freely, or later enters regulated banking-adjacent activity. Mandatory board and statutory-auditor requirements add governance the platform needs by Series-A. |
+| **SARL** (Limited)        | Reject for go-forward; usable for a 6–12 month MVP only | Cheaper to set up but capped at 20 partners, and share transfers require partner consent. Conversion SARL→SAL is non-trivial (notary, re-registration, re-stamping). |
 | **Holding (Law 45/1983)** | Reject    | Tax wrapper for owning shares in other companies; cannot itself carry on commercial activity such as commission collection.                              |
 | **Offshore (Law 19/2008)**| Reject    | Forbidden from doing business inside Lebanon. Jeeb's customers are Lebanese; an offshore vehicle cannot invoice them.                                    |
 | **Free-zone / SAL-O**     | Reject    | Same reason — operates only outside Lebanese customs territory.                                                                                          |
@@ -51,7 +51,7 @@ as amended), registered with the Beirut Commercial Register
 7. **Register with the NSSF** before hiring the first employee (Jeebers are
    NOT employees — see §5 below).
 8. **Open operating bank account** and unblock paid-in capital.
-9. **PSP / acquiring contract** — see [settlement-provider-contract-requirements.md](./settlement-provider-contract-requirements.md).
+9. **COD reconciliation controls** — see [cod-settlement-controls.md](./cod-settlement-controls.md).
 
 ## 5. Jeebers are contractors, not employees
 
@@ -85,18 +85,18 @@ contractors**. To preserve that classification:
 
 1. Confirm 2026 foreign-shareholder rules — Law 296/2001 amendments on
    foreign ownership of commercial activity are still being reinterpreted.
-2. Confirm SAL is acceptable counterparty for chosen PSP (some BdL
-   Circular 69 PSPs require SAL with minimum LBP 1,000,000,000 capital for
-   aggregator services).
-3. Confirm whether the commission platform triggers a BdL Circular 83
-   electronic-payment-services notification (likely NO if Jeeb never holds
-   client funds beyond a 24-hour settlement window).
+2. Confirm the legal cash-custody and agency treatment when an independent
+   Jeeber collects COD from a Client before reconciliation.
+3. Confirm whether the COD marketplace, internal UPG record, commission
+   retention, or any separately arranged Jeeber payout triggers a BdL notice
+   or licence. Do not classify UPG itself as an electronic-payment service.
 
 ## 8. References
 
 - Lebanese Commercial Code, Decree-Law 304/1942.
 - Law 296/2001 on foreign acquisition of real rights (shareholder limits).
 - Law 282/1993 (NSSF amendments).
-- BdL Basic Circulars 69, 81, 83.
+- Applicable BdL banking and AML/CFT circulars, as identified by counsel for
+  the actual COD and payout arrangement.
 - Beirut Bar Association — directory of corporate counsel.
 - LACPA — directory of registered auditors.

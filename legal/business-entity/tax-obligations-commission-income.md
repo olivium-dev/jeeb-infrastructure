@@ -90,18 +90,19 @@ of the gross payment at source.
 | Sole prop. or SARL with VAT registration          | **0% (recipient self-declares)** |
 | Foreign service provider, no Lebanese PE          | **2.25%** (Art. 41 of CIT law as amended) |
 
-**Mechanics:** withhold inside the wallet-service settlement step; remit by
-the **15th of the following month** on Form R10; issue an annual withholding
-certificate to each Jeeber so they can offset against personal income tax.
+**Mechanics:** calculate withholding in the COD settlement and payout
+reconciliation step; remit by the **15th of the following month** on Form R10;
+issue an annual withholding certificate to each Jeeber so they can offset
+against personal income tax.
 
 **Audit-proofing:** persist `withholding_pct`, `withholding_amount`,
 `withholding_form_id`, `remittance_ref`, and `remittance_date` on every
-payout transaction in the wallet ledger.
+payout reconciliation record linked to the durable COD settlement.
 
 ## 5. Stamp duty
 
 Every contract — including the master services agreement with Jeebers,
-Merchant contracts, the PSP contract, and significant SaaS subscriptions —
+Merchant contracts, any separately executed banking or payout agreement, and significant SaaS subscriptions —
 attracts **0.4%** stamp duty on the contractual consideration, Decree-Law
 67/1967. For the Jeeber click-through agreement Lebanese counsel typically
 opines that stamp duty is **nil** because the consideration is variable and

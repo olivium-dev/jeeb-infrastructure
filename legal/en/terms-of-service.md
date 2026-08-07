@@ -79,9 +79,11 @@ these Terms, the Prohibited Items Policy, or applicable law (see §11).
 Policy. Doing so is a material breach and may result in immediate suspension
 plus civil or criminal liability.
 
-5.3 The Client pays the agreed price via the unified payment gateway
-integrated with the Platform. Cash-on-delivery, where supported, follows the
-in-app flow and is not a side arrangement outside the Platform.
+5.3 The Client pays the agreed price in cash upon delivery. The Platform's
+unified payment gateway records the cash-on-delivery obligation, collection
+status, and settlement; it does not process an electronic or card payment for
+Jeeb. The cash obligation must remain in the in-app flow and must not become an
+unrecorded side arrangement.
 
 5.4 The Client treats the Jeeber with respect. Harassment, threats, slurs,
 or discriminatory conduct toward a Jeeber are grounds for immediate
@@ -124,9 +126,11 @@ with at least 14 days' notice.
 registers with the Platform, subject to the payout cadence published in
 the Jeeber-side app.
 
-7.4 Refunds, chargebacks, and disputed payments follow the in-app
-resolution flow. Jeeb may withhold or reverse payouts that relate to
-disputed, fraudulent, or non-completed Requests.
+7.4 Cash-on-delivery creates no automated refund or card-chargeback path.
+Disputed cash collections follow the in-app resolution flow, and any cash
+reimbursement is handled manually after review. Jeeb may withhold or adjust
+future settlements that relate to disputed, fraudulent, or non-completed
+Requests.
 
 ## 8. Ratings, feedback, and standing
 

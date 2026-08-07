@@ -132,10 +132,11 @@ Prohibited Items Policy. Doing so constitutes a material breach of these
 Terms and may result in immediate account suspension, civil liability,
 and/or criminal prosecution under Lebanese law.
 
-5.3 The Client shall pay the agreed price through the payment methods
-integrated into the Platform. Where cash-on-delivery is available, it
-shall be processed exclusively through the in-app flow and not through
-any side arrangement outside the Platform.
+5.3 The Client shall pay the agreed price in cash upon delivery. The
+Platform's unified payment gateway records the cash-on-delivery obligation,
+collection status, and settlement; it does not process an electronic or card
+payment for Jeeb. The cash obligation shall remain in the in-app flow and not
+become an unrecorded side arrangement outside the Platform.
 
 5.4 The Client shall treat all Jeebers with dignity and respect.
 Harassment, threats, verbal abuse, discriminatory conduct, or physical
@@ -211,15 +212,16 @@ and any applicable fees) are settled to the Jeeber's registered bank
 account or electronic wallet according to the payout schedule published in
 the Jeeber-side application (currently [weekly/bi-weekly]).
 
-7.4 **Payment Processing.** All electronic payments are processed through
-Jeeb's integrated payment gateway. Jeeb does not store raw credit card
-numbers; all card data is handled by PCI-DSS compliant payment service
-providers.
+7.4 **Cash-on-Delivery Processing.** The unified payment gateway is Jeeb's
+durable record for cash-on-delivery obligations, collection status,
+settlements, and reconciliation. It does not provide electronic or card
+payment processing for Jeeb, and Jeeb does not collect card data for Requests.
 
-7.5 **Refunds and Disputes.** Refunds, chargebacks, and payment disputes
-are handled through the in-app dispute resolution flow described in
-Section 9. Jeeb may withhold or reverse payouts related to disputed,
-fraudulent, or uncompleted Requests pending resolution.
+7.5 **Cash Disputes.** Cash-on-delivery creates no automated refund or
+card-chargeback path. Disputed collections are handled through the in-app
+resolution flow described in Section 9, and any cash reimbursement is handled
+manually after review. Jeeb may withhold or adjust future settlements related
+to disputed, fraudulent, or uncompleted Requests pending resolution.
 
 7.6 **Taxes.** All prices displayed to Clients include applicable
 Lebanese Value Added Tax (VAT) where required. Jeebers are responsible
@@ -237,8 +239,9 @@ documentation in accordance with Lebanese tax law.
   - (c) **After pickup:** The Client is responsible for the full Request
     price plus any return-trip costs unless the cancellation is due to a
     fault attributable to the Jeeber.
-  - (d) Cancellation fees are non-refundable except in cases of Platform
-    error or Jeeber misconduct verified by Jeeb.
+  - (d) Cancellation fees are not reversed automatically. Claims of Platform
+    error or Jeeber misconduct are reviewed through the Section 9 dispute flow,
+    with any cash reimbursement handled manually.
 
 8.2 **Jeeber Cancellation.**
   - (a) A Jeeber may cancel an accepted Request before pickup without

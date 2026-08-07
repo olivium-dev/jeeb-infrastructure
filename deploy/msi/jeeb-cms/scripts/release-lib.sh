@@ -18,7 +18,6 @@ RELEASE_URL="${JEEB_CMS_RELEASE_URL:-http://127.0.0.1:10100/release.json}"
 MANIFEST_URL="${JEEB_CMS_MANIFEST_URL:-http://127.0.0.1:10100/SHA256SUMS}"
 NGINX_SERVICE="${JEEB_CMS_NGINX_SERVICE:-nginx.service}"
 ACTIVATOR="${JEEB_CMS_ACTIVATOR:-native}"
-DOCKER_HELPER="${JEEB_CMS_DOCKER_HELPER:-${TOOLS_DIR}/docker-nginx.sh}"
 
 die() {
   echo "ERROR: $*" >&2
@@ -72,8 +71,7 @@ import sys
 
 target, link_path, next_link = sys.argv[1:]
 try:
-    # Relative pointers remain valid when a user-owned CMS root is mounted at
-    # /opt/jeeb-cms inside the no-sudo nginx container.
+    # Relative pointers stay valid if the CMS root is relocated or remounted.
     link_directory = os.path.realpath(os.path.dirname(link_path))
     os.symlink(os.path.relpath(target, link_directory), next_link)
     os.replace(next_link, link_path)
@@ -106,14 +104,6 @@ PY
 }
 
 test_nginx() {
-  if [ "$ACTIVATOR" = "docker" ]; then
-    [ -x "$DOCKER_HELPER" ] || {
-      echo "ERROR: Docker nginx helper is unavailable: $DOCKER_HELPER" >&2
-      return 1
-    }
-    "$DOCKER_HELPER" test || return 1
-    return 0
-  fi
   [ "$ACTIVATOR" = "native" ] || {
     echo "ERROR: unsupported JEEB_CMS_ACTIVATOR: $ACTIVATOR" >&2
     return 1
@@ -126,14 +116,6 @@ test_nginx() {
 }
 
 reload_nginx() {
-  if [ "$ACTIVATOR" = "docker" ]; then
-    [ -x "$DOCKER_HELPER" ] || {
-      echo "ERROR: Docker nginx helper is unavailable: $DOCKER_HELPER" >&2
-      return 1
-    }
-    "$DOCKER_HELPER" reload || return 1
-    return 0
-  fi
   [ "$ACTIVATOR" = "native" ] || {
     echo "ERROR: unsupported JEEB_CMS_ACTIVATOR: $ACTIVATOR" >&2
     return 1

@@ -129,8 +129,11 @@ on KYC erasure.
   only to the vetting partner's EU region; encrypted at rest and in
   transit; processor cannot retain after a 90-day verification window.
 - No transfers to jurisdictions on the FATF black list.
-- Payouts via `unified_payment_gateway` operate under that service's
-  contractual data-sharing agreements.
+- The internal `unified_payment_gateway` receives only opaque identifiers,
+  COD amounts, collection/reconciliation status, and audit metadata. It does
+  not receive raw KYC artefacts and is not a bank or external payout provider.
+- Any separately contracted operational payout provider is governed by its
+  own approved data-processing terms and is outside UPG's COD-owner role.
 
 ## 9. Audit cadence
 

@@ -30,12 +30,12 @@ We apply a risk-tiered model rather than a single one-size process. Tier is
 assigned at onboarding and re-evaluated on trigger events (large transaction,
 adverse-media hit, complaint, etc.).
 
-| Tier | Who                                              | Verification depth                            | Transaction caps (LBP equivalent / month) |
-| ---- | ------------------------------------------------ | --------------------------------------------- | ----------------------------------------- |
-| T0   | New Client, mobile-only, no payment instrument   | Phone OTP only                                | Read-only; cannot transact                |
-| T1   | Client with payment instrument                   | Phone OTP + name + DoB + ID number captured   | Equivalent of USD 500                     |
-| T2   | Client, elevated cap or repeat user              | T1 + ID-document image + selfie liveness      | Equivalent of USD 2,000                   |
-| T3   | Jeeber / Merchant                                | T2 + address proof + sanctions/PEP screening  | Eligible for payouts; no cap, monitored   |
+| Tier | Who                                              | Verification depth                            | COD Request-value cap (LBP equivalent / month) |
+| ---- | ------------------------------------------------ | --------------------------------------------- | ---------------------------------------------- |
+| T0   | New Client, phone-only                           | Phone OTP only                                | Read-only; cannot create a COD Request         |
+| T1   | Client approved for COD Requests                 | Phone OTP + name + DoB + ID number captured   | Equivalent of USD 500                          |
+| T2   | Client, elevated COD cap or repeat user          | T1 + ID-document image + selfie liveness      | Equivalent of USD 2,000                        |
+| T3   | Jeeber / Merchant                                | T2 + address proof + sanctions/PEP screening  | Eligible for operational payouts; monitored    |
 
 Tier upgrades require an explicit user action AND a successful additional
 check; tiers never auto-upgrade silently.
@@ -158,8 +158,9 @@ for retention.
 
 - Crypto / virtual-asset onboarding (Lebanon position not yet settled).
 - Corporate/legal-entity KYB — deferred until post-pilot.
-- Payouts to non-Lebanese bank accounts — uses
-  `unified_payment_gateway` partner-bank KYC.
+- Payouts to non-Lebanese bank accounts. They are outside the pilot. Any
+  future banking KYC is a separate legal and operational process; UPG has no
+  partner-bank KYC role and remains the internal durable COD record.
 
 ## 9. Audit & evidence
 

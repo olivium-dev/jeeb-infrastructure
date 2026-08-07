@@ -105,8 +105,8 @@ If the recipient is not VAT-registered, a 7.5% withholding on services
   - `NNNNNN` — strictly monotonic per series, no gaps. Voided invoices keep
     their number and are marked `ملغاة / VOID`; reissue with the next number.
 - Storage: every PDF + JSON representation archived for **10 years**
-  (Commercial Code Art. 12). The wallet-service ledger is the authoritative
-  store; the invoice PDF is a derived view.
+  (Commercial Code Art. 12). The durable COD settlement and reconciliation
+  records in UPG are authoritative; the invoice PDF is a derived finance view.
 
 ## 4. Edge cases & special invoices
 
@@ -114,7 +114,7 @@ If the recipient is not VAT-registered, a 7.5% withholding on services
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | Recipient is VAT-exempt (e.g. diplomatic mission)| Omit VAT line, add exemption reference (decision number).                                  |
 | Cross-border recipient (export of services)      | Zero-rated VAT under Law 379/2001 Art. 17; show "VAT 0% — export of services".             |
-| Refund / credit note                             | Issue `JEEB-CN-YYYY-NNNNNN` referencing original invoice number, with negative amounts.    |
+| Manual reimbursement or invoice correction      | After reviewed COD dispute resolution, issue `JEEB-CN-YYYY-NNNNNN` referencing the original invoice, with negative amounts. No automated refund or card-chargeback flow exists. |
 | Multi-currency invoice                           | Primary amounts in LBP; foreign currency shown in brackets; BdL middle rate on issue date. |
 | Settlement-net invoicing (we deduct commission)  | Issue commission invoice + a separate **payout statement** documenting the net transfer.   |
 
@@ -128,7 +128,7 @@ internal posture:
 - Archive in immutable S3-compatible storage with object-lock for 10 years.
 - When/if MoF mandates a real-time clearance model (under discussion in the
   2026 budget), the invoice generator will switch to the clearance flow
-  without changing the upstream wallet-service contract.
+  without changing UPG's authoritative COD settlement contract.
 
 ## 6. References
 

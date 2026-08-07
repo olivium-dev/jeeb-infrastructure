@@ -80,10 +80,10 @@ Policy. Doing so is a material breach and may result in immediate suspension
 plus civil or criminal liability.
 
 5.3 The Client pays the agreed price in cash upon delivery. The Platform's
-unified payment gateway records the cash-on-delivery obligation, collection
-status, and settlement; it does not process an electronic or card payment for
-Jeeb. The cash obligation must remain in the in-app flow and must not become an
-unrecorded side arrangement.
+unified payment gateway is Jeeb's durable record of the cash-on-delivery
+obligation, collection status, settlement, and reconciliation; it does not
+process an electronic or card payment for Jeeb. The cash obligation must remain
+in the in-app flow and must not become an unrecorded side arrangement.
 
 5.4 The Client treats the Jeeber with respect. Harassment, threats, slurs,
 or discriminatory conduct toward a Jeeber are grounds for immediate

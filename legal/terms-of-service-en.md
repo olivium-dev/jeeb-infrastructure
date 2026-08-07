@@ -133,10 +133,11 @@ Terms and may result in immediate account suspension, civil liability,
 and/or criminal prosecution under Lebanese law.
 
 5.3 The Client shall pay the agreed price in cash upon delivery. The
-Platform's unified payment gateway records the cash-on-delivery obligation,
-collection status, and settlement; it does not process an electronic or card
-payment for Jeeb. The cash obligation shall remain in the in-app flow and not
-become an unrecorded side arrangement outside the Platform.
+Platform's unified payment gateway is Jeeb's durable record of the
+cash-on-delivery obligation, collection status, settlement, and
+reconciliation; it does not process an electronic or card payment for Jeeb.
+The cash obligation shall remain in the in-app flow and not become an
+unrecorded side arrangement outside the Platform.
 
 5.4 The Client shall treat all Jeebers with dignity and respect.
 Harassment, threats, verbal abuse, discriminatory conduct, or physical

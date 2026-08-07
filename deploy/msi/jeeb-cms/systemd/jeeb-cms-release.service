@@ -1,0 +1,15 @@
+[Unit]
+Description=Validate the active Jeeb CMS release
+Documentation=file:/opt/jeeb-cms/README.md
+After=local-fs.target
+Before=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/jeeb-cms/tools/verify-current.sh
+RemainAfterExit=yes
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

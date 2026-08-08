@@ -17,8 +17,8 @@ class NginxContractTests(unittest.TestCase):
         cls.text = CONFIG.read_text(encoding="utf-8")
 
     def test_private_listener_and_backoffice_host(self) -> None:
-        self.assertIn("listen 127.0.0.1:10100;", self.text)
-        self.assertNotRegex(self.text, r"(?m)^\s*listen\s+(?:0\.0\.0\.0:)?10100;")
+        self.assertIn("listen 80;", self.text)
+        self.assertNotIn("listen 127.0.0.1:10100;", self.text)
         self.assertIn("server_name backoffice.jeeb.fds-1.com;", self.text)
         self.assertIn("root /opt/jeeb-cms/current;", self.text)
 

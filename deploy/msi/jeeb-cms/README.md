@@ -4,9 +4,9 @@ This directory contains the MSI hosting foundation for the Jeeb back-office CMS.
 
 The intended request path is:
 
-`Cloudflare Access -> Cloudflare Tunnel -> 127.0.0.1:10100 nginx -> static CMS or 127.0.0.1:10090 gateway`
+`MSI operator LAN -> port 80 nginx -> static CMS or 127.0.0.1:10090 gateway`
 
-DNS, the Cloudflare tunnel, and Access policy are external prerequisites. These files do not create or modify them.
+The native listener is intentionally reachable on the trusted MSI operator LAN. DNS, a Cloudflare tunnel, and an Access policy remain external prerequisites before any public exposure; these files do not create or modify them.
 
 ## Release artifact contract
 
@@ -99,7 +99,7 @@ systemctl enable jeeb-cms-release.service
 systemctl restart jeeb-cms-release.service
 ```
 
-Do not open port `10100` in UFW. The nginx listener is loopback-only. From step 3 onward the nginx systemd drop-in requires the validation unit, so a missing or invalid active release prevents native nginx from starting at boot.
+Keep port 80 limited to the trusted MSI operator LAN. From step 3 onward the nginx systemd drop-in requires the validation unit, so a missing or invalid active release prevents native nginx from starting at boot.
 
 ## Deploy and rollback
 
@@ -128,9 +128,9 @@ Rollback never edits release contents or domain data. It validates the target an
 
 ```bash
 sudo /opt/jeeb-cms/tools/verify-current.sh --runtime
-curl -fsS http://127.0.0.1:10100/healthz
-curl -fsS http://127.0.0.1:10100/release.json
-curl -fsS http://127.0.0.1:10100/gateway/health/ready
+curl -fsS http://127.0.0.1/healthz
+curl -fsS http://127.0.0.1/release.json
+curl -fsS http://127.0.0.1/gateway/health/ready
 ```
 
 Before operator access, additionally verify private TLS/Access, deep links, strict missing-remote 404 behavior, CSP/cache headers, release hashes, and successful Playwright journeys through the private domain.

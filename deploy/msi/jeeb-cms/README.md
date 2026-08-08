@@ -10,7 +10,7 @@ DNS, the Cloudflare tunnel, and Access policy are external prerequisites. These 
 
 ## Release artifact contract
 
-A release is one immutable directory containing the shell and all three essential remotes:
+A release is one immutable directory containing the shell and all eight CMS remotes:
 
 ```text
 artifact/
@@ -19,8 +19,13 @@ artifact/
 ├── SHA256SUMS
 └── mf/
     ├── cases/remoteEntry.js
+    ├── config/remoteEntry.js
     ├── deliveries/remoteEntry.js
-    └── settlements/remoteEntry.js
+    ├── kyc/remoteEntry.js
+    ├── orders/remoteEntry.js
+    ├── settlements/remoteEntry.js
+    ├── users/remoteEntry.js
+    └── wallet/remoteEntry.js
 ```
 
 Every other emitted file must also be listed in `SHA256SUMS`. `SHA256SUMS` does not list itself. Symbolic links, public source maps, inline source maps, unchecksummed files, configured localhost/private HTTP service URLs, raw storage URLs, signed URLs, and private keys are rejected. Only four pinned browser-library forms are scrubbed before scanning: Axios's browser-origin fallback and React Router's three relative-URL parsing/origin-selection forms. Active localhost fetches, loosely similar code, and localhost ports/paths/queries remain forbidden.
@@ -39,14 +44,19 @@ Every other emitted file must also be listed in `SHA256SUMS`. `SHA256SUMS` does 
 
 The production CMS must be built with the relative gateway origin `/gateway`. Never place tokens, credentials, signed evidence URLs, or service addresses in the artifact.
 
-After all four production builds succeed, assemble and validate the immutable artifact:
+After all nine production builds succeed, assemble and validate the immutable artifact:
 
 ```bash
 python3 scripts/assemble-release.py \
   --shell /path/to/ofc-cms-shell/dist \
   --cases /path/to/ofl-cms-cases-mfe/dist \
+  --config /path/to/ofl-cms-config-mfe/dist \
   --deliveries /path/to/ofl-cms-deliveries-mfe/dist \
+  --kyc /path/to/ofl-cms-kyc-mfe/dist \
+  --orders /path/to/ofl-cms-orders-mfe/dist \
   --settlements /path/to/ofl-cms-settlements-mfe/dist \
+  --users /path/to/ofl-cms-users-mfe/dist \
+  --wallet /path/to/ofl-cms-wallet-mfe/dist \
   --output /path/to/release-artifact \
   --release-id <release-id> \
   --cms-commit <merged-cms-sha> \

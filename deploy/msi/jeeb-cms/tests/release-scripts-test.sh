@@ -129,12 +129,13 @@ PY
 }
 
 make_release() {
-  local release_id="$1" destination="${TMP_ROOT}/$1"
-  mkdir -p "$destination/mf/cases" "$destination/mf/deliveries" "$destination/mf/settlements" "$destination/assets"
+  local release_id="$1" destination="${TMP_ROOT}/$1" remote
+  mkdir -p "$destination/assets"
   printf '<!doctype html><title>%s</title>\n' "$release_id" >"$destination/index.html"
-  printf 'console.log("cases-%s")\n' "$release_id" >"$destination/mf/cases/remoteEntry.js"
-  printf 'console.log("deliveries-%s")\n' "$release_id" >"$destination/mf/deliveries/remoteEntry.js"
-  printf 'console.log("settlements-%s")\n' "$release_id" >"$destination/mf/settlements/remoteEntry.js"
+  for remote in cases config deliveries kyc orders settlements users wallet; do
+    mkdir -p "$destination/mf/$remote"
+    printf 'console.log("%s-%s")\n' "$remote" "$release_id" >"$destination/mf/$remote/remoteEntry.js"
+  done
   printf 'body{}\n' >"$destination/assets/app.1234abcd.css"
   cat >"$destination/release.json" <<JSON
 {"releaseId":"${release_id}","cmsCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","gatewayCommit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","openapiSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","builtAt":"2026-08-07T00:00:00Z"}

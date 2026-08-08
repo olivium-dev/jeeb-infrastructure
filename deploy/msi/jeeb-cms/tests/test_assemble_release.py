@@ -14,6 +14,16 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[1]
 ASSEMBLER = BASE_DIR / "scripts" / "assemble-release.py"
 VALIDATOR = BASE_DIR / "scripts" / "validate-release.py"
+REMOTES = (
+    "cases",
+    "config",
+    "deliveries",
+    "kyc",
+    "orders",
+    "settlements",
+    "users",
+    "wallet",
+)
 
 
 class AssembleReleaseTests(unittest.TestCase):
@@ -21,7 +31,7 @@ class AssembleReleaseTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.sources: dict[str, Path] = {}
-        for name in ("shell", "cases", "deliveries", "settlements"):
+        for name in ("shell", *REMOTES):
             source = self.root / name
             source.mkdir()
             self.sources[name] = source
@@ -35,7 +45,7 @@ class AssembleReleaseTests(unittest.TestCase):
             '"/mf/settlements/remoteEntry.js"];const gateway="/gateway";\n',
             encoding="utf-8",
         )
-        for name in ("cases", "deliveries", "settlements"):
+        for name in REMOTES:
             (self.sources[name] / "remoteEntry.js").write_text(
                 f'__webpack_public_path__="/mf/{name}/";\n', encoding="utf-8"
             )
@@ -52,12 +62,11 @@ class AssembleReleaseTests(unittest.TestCase):
             str(ASSEMBLER),
             "--shell",
             str(self.sources["shell"]),
-            "--cases",
-            str(self.sources["cases"]),
-            "--deliveries",
-            str(self.sources["deliveries"]),
-            "--settlements",
-            str(self.sources["settlements"]),
+            *[
+                value
+                for remote in REMOTES
+                for value in (f"--{remote}", str(self.sources[remote]))
+            ],
             "--output",
             str(output),
             "--release-id",
@@ -80,7 +89,7 @@ class AssembleReleaseTests(unittest.TestCase):
             text=True,
         )
 
-        for remote in ("cases", "deliveries", "settlements"):
+        for remote in REMOTES:
             self.assertTrue((output / "mf" / remote / "remoteEntry.js").is_file())
             self.assertTrue((output / "mf" / remote / "123.js").is_file())
         self.assertFalse((output / "mf" / "case-management").exists())

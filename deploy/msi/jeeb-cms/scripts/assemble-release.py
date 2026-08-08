@@ -19,6 +19,16 @@ from pathlib import Path
 RELEASE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 GIT_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+REMOTES = (
+    "cases",
+    "config",
+    "deliveries",
+    "kyc",
+    "orders",
+    "settlements",
+    "users",
+    "wallet",
+)
 
 
 def regular_tree(source: Path, label: str) -> None:
@@ -79,9 +89,8 @@ def write_manifest(root: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shell", type=Path, required=True)
-    parser.add_argument("--cases", type=Path, required=True)
-    parser.add_argument("--deliveries", type=Path, required=True)
-    parser.add_argument("--settlements", type=Path, required=True)
+    for remote in REMOTES:
+        parser.add_argument(f"--{remote}", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
     parser.add_argument("--cms-commit", required=True)
@@ -100,12 +109,8 @@ def main() -> int:
     if args.output.exists() or args.output.is_symlink():
         parser.error("--output must not already exist")
 
-    sources = {
-        "shell": args.shell.resolve(),
-        "cases": args.cases.resolve(),
-        "deliveries": args.deliveries.resolve(),
-        "settlements": args.settlements.resolve(),
-    }
+    sources = {"shell": args.shell.resolve()}
+    sources.update({remote: getattr(args, remote).resolve() for remote in REMOTES})
     for label, source in sources.items():
         regular_tree(source, label)
 
@@ -119,7 +124,7 @@ def main() -> int:
     temporary = Path(tempfile.mkdtemp(prefix=f".{args.release_id}.assembling.", dir=output.parent))
     try:
         copy_tree_contents(sources["shell"], temporary)
-        for remote in ("cases", "deliveries", "settlements"):
+        for remote in REMOTES:
             copy_tree_contents(sources[remote], temporary / "mf" / remote)
         metadata = {
             "releaseId": args.release_id,

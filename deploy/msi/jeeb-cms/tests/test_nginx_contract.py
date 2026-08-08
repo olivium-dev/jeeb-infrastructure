@@ -80,6 +80,7 @@ class NginxContractTests(unittest.TestCase):
         ):
             self.assertIn(fragment, self.text)
         self.assertNotIn("unsafe-eval", self.text)
+        self.assertNotIn("upgrade-insecure-requests", self.text)
 
     def test_boot_dependencies_fail_closed_before_nginx(self) -> None:
         native_drop_in = (

@@ -6,7 +6,7 @@ The intended request path is:
 
 `MSI operator LAN -> port 80 nginx -> static CMS or 127.0.0.1:10090 gateway`
 
-The native listener is intentionally reachable on the trusted MSI operator LAN. DNS, a Cloudflare tunnel, and an Access policy remain external prerequisites before any public exposure; these files do not create or modify them.
+The native HTTP listener is intentionally reachable on the trusted MSI operator LAN and its CSP does not upgrade same-origin assets to HTTPS. DNS, a Cloudflare tunnel, TLS termination, and an Access policy remain external prerequisites before any public exposure; these files do not create or modify them.
 
 ## Release artifact contract
 
@@ -78,6 +78,8 @@ install -m 0644 nginx/backoffice.jeeb.fds-1.com.conf \
   /etc/nginx/sites-available/backoffice.jeeb.fds-1.com.conf
 ln -s /etc/nginx/sites-available/backoffice.jeeb.fds-1.com.conf \
   /etc/nginx/sites-enabled/backoffice.jeeb.fds-1.com.conf
+# Preserve its target as a rollback pointer, then disable the distro landing page.
+test ! -L /etc/nginx/sites-enabled/default || unlink /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable --now nginx
 ```

@@ -52,7 +52,11 @@ workflow or source file. The fleet uses the following secret names as needed:
 - PostgreSQL: `JEEB_DB_HOST`, `JEEB_DB_PORT`, `JEEB_DB_USERNAME`,
   `JEEB_DB_PASSWORD`, `JEEB_DATABASE_URL`, `JEEB_DB_CONNECTION`,
   `JEEB_STATE_DATABASE_URL`, `KYC_DATABASE_URL`, `JEEB_RTC_DATABASE_URL`.
-- MongoDB: `JEEB_MONGO_PORT`, `JEEB_MONGO_USERNAME`, `JEEB_MONGO_PASSWORD`.
+- MongoDB: `JEEB_MONGO_PORT`. The `.20` MongoDB instance currently has no
+  `security.authorization` setting; access is constrained by its private bind
+  addresses and UFW. The notification staging URI therefore contains no
+  username or password. If MongoDB authentication is enabled later, rotate to
+  a dedicated staging user and update this contract in the same change.
 - Redis: `JEEB_REDIS_URL`, `HEARTBEAT_REDIS_URL`.
 - Identity and application: `JEEB_JWT_SIGNING_KEY`, `JEEB_JWT_ISSUER`,
   `JEEB_SUPERADMIN_PASSCODE`, `JEEB_PHONE_HASH_PEPPER`,

@@ -17,8 +17,8 @@ class NginxContractTests(unittest.TestCase):
         cls.text = CONFIG.read_text(encoding="utf-8")
 
     def test_private_listener_and_backoffice_host(self) -> None:
-        self.assertIn("listen 127.0.0.1:10100;", self.text)
-        self.assertNotRegex(self.text, r"(?m)^\s*listen\s+(?:0\.0\.0\.0:)?10100;")
+        self.assertIn("listen 80;", self.text)
+        self.assertNotIn("listen 127.0.0.1:10100;", self.text)
         self.assertIn("server_name backoffice.jeeb.fds-1.com;", self.text)
         self.assertIn("root /opt/jeeb-cms/current;", self.text)
 
@@ -80,6 +80,7 @@ class NginxContractTests(unittest.TestCase):
         ):
             self.assertIn(fragment, self.text)
         self.assertNotIn("unsafe-eval", self.text)
+        self.assertNotIn("upgrade-insecure-requests", self.text)
 
     def test_boot_dependencies_fail_closed_before_nginx(self) -> None:
         native_drop_in = (

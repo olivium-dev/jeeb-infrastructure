@@ -47,8 +47,13 @@ REQUIRED_FILES = {
     "index.html",
     "release.json",
     "mf/cases/remoteEntry.js",
+    "mf/config/remoteEntry.js",
     "mf/deliveries/remoteEntry.js",
+    "mf/kyc/remoteEntry.js",
+    "mf/orders/remoteEntry.js",
     "mf/settlements/remoteEntry.js",
+    "mf/users/remoteEntry.js",
+    "mf/wallet/remoteEntry.js",
 }
 SAFE_LIBRARY_LOCALHOST_PATTERNS = (
     # Axios browser-environment origin fallback. In a browser the left side is

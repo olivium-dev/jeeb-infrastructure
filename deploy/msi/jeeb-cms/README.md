@@ -4,13 +4,13 @@ This directory contains the MSI hosting foundation for the Jeeb back-office CMS.
 
 The intended request path is:
 
-`Cloudflare Access -> Cloudflare Tunnel -> 127.0.0.1:10100 nginx -> static CMS or 127.0.0.1:10090 gateway`
+`MSI operator LAN -> port 80 nginx -> static CMS or 127.0.0.1:10090 gateway`
 
-DNS, the Cloudflare tunnel, and Access policy are external prerequisites. These files do not create or modify them.
+The native HTTP listener is intentionally reachable on the trusted MSI operator LAN and its CSP does not upgrade same-origin assets to HTTPS. DNS, a Cloudflare tunnel, TLS termination, and an Access policy remain external prerequisites before any public exposure; these files do not create or modify them.
 
 ## Release artifact contract
 
-A release is one immutable directory containing the shell and all three essential remotes:
+A release is one immutable directory containing the shell and all eight CMS remotes:
 
 ```text
 artifact/
@@ -19,8 +19,13 @@ artifact/
 ├── SHA256SUMS
 └── mf/
     ├── cases/remoteEntry.js
+    ├── config/remoteEntry.js
     ├── deliveries/remoteEntry.js
-    └── settlements/remoteEntry.js
+    ├── kyc/remoteEntry.js
+    ├── orders/remoteEntry.js
+    ├── settlements/remoteEntry.js
+    ├── users/remoteEntry.js
+    └── wallet/remoteEntry.js
 ```
 
 Every other emitted file must also be listed in `SHA256SUMS`. `SHA256SUMS` does not list itself. Symbolic links, public source maps, inline source maps, unchecksummed files, configured localhost/private HTTP service URLs, raw storage URLs, signed URLs, and private keys are rejected. Only four pinned browser-library forms are scrubbed before scanning: Axios's browser-origin fallback and React Router's three relative-URL parsing/origin-selection forms. Active localhost fetches, loosely similar code, and localhost ports/paths/queries remain forbidden.
@@ -39,14 +44,19 @@ Every other emitted file must also be listed in `SHA256SUMS`. `SHA256SUMS` does 
 
 The production CMS must be built with the relative gateway origin `/gateway`. Never place tokens, credentials, signed evidence URLs, or service addresses in the artifact.
 
-After all four production builds succeed, assemble and validate the immutable artifact:
+After all nine production builds succeed, assemble and validate the immutable artifact:
 
 ```bash
 python3 scripts/assemble-release.py \
   --shell /path/to/ofc-cms-shell/dist \
   --cases /path/to/ofl-cms-cases-mfe/dist \
+  --config /path/to/ofl-cms-config-mfe/dist \
   --deliveries /path/to/ofl-cms-deliveries-mfe/dist \
+  --kyc /path/to/ofl-cms-kyc-mfe/dist \
+  --orders /path/to/ofl-cms-orders-mfe/dist \
   --settlements /path/to/ofl-cms-settlements-mfe/dist \
+  --users /path/to/ofl-cms-users-mfe/dist \
+  --wallet /path/to/ofl-cms-wallet-mfe/dist \
   --output /path/to/release-artifact \
   --release-id <release-id> \
   --cms-commit <merged-cms-sha> \
@@ -68,6 +78,8 @@ install -m 0644 nginx/backoffice.jeeb.fds-1.com.conf \
   /etc/nginx/sites-available/backoffice.jeeb.fds-1.com.conf
 ln -s /etc/nginx/sites-available/backoffice.jeeb.fds-1.com.conf \
   /etc/nginx/sites-enabled/backoffice.jeeb.fds-1.com.conf
+# Preserve its target as a rollback pointer, then disable the distro landing page.
+test ! -L /etc/nginx/sites-enabled/default || unlink /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable --now nginx
 ```
@@ -89,7 +101,7 @@ systemctl enable jeeb-cms-release.service
 systemctl restart jeeb-cms-release.service
 ```
 
-Do not open port `10100` in UFW. The nginx listener is loopback-only. From step 3 onward the nginx systemd drop-in requires the validation unit, so a missing or invalid active release prevents native nginx from starting at boot.
+Keep port 80 limited to the trusted MSI operator LAN. From step 3 onward the nginx systemd drop-in requires the validation unit, so a missing or invalid active release prevents native nginx from starting at boot.
 
 ## Deploy and rollback
 
@@ -118,9 +130,9 @@ Rollback never edits release contents or domain data. It validates the target an
 
 ```bash
 sudo /opt/jeeb-cms/tools/verify-current.sh --runtime
-curl -fsS http://127.0.0.1:10100/healthz
-curl -fsS http://127.0.0.1:10100/release.json
-curl -fsS http://127.0.0.1:10100/gateway/health/ready
+curl -fsS http://127.0.0.1/healthz
+curl -fsS http://127.0.0.1/release.json
+curl -fsS http://127.0.0.1/gateway/health/ready
 ```
 
 Before operator access, additionally verify private TLS/Access, deep links, strict missing-remote 404 behavior, CSP/cache headers, release hashes, and successful Playwright journeys through the private domain.

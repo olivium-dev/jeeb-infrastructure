@@ -1,0 +1,517 @@
+{
+  "schema_version": "1.0",
+  "project": "Jeeb architecture ownership review",
+  "generated_at": "2026-08-10",
+  "source": "https://jeeb-architecture-review.oudaykhaled.chatgpt.site/",
+  "summary": {
+    "point_count": 22,
+    "review_comment_count": 19,
+    "points_without_explicit_comment": [
+      "settlement-batches",
+      "settlement-ledger",
+      "wallet-direct-read"
+    ],
+    "new_repositories_required": 0,
+    "current_state": {
+      "gateway_has_database": true,
+      "gateway_has_durable_state": true,
+      "upg_usage": "branch-dependent",
+      "source_branch_must_be_pinned": true
+    },
+    "target_state": {
+      "gateway_has_database": false,
+      "gateway_has_durable_state": false,
+      "upg_used_by_jeeb": false
+    }
+  },
+  "investigation_questions": [
+    {
+      "id": "q1_existing_jeeb_service",
+      "question": "Is there an existing Jeeb microservice that can handle this case?"
+    },
+    {
+      "id": "q2_other_olivium_service",
+      "question": "Is there another Olivium microservice that can handle the situation?"
+    },
+    {
+      "id": "q3_reusable_extension",
+      "question": "Can an existing microservice be adjusted while keeping the feature Jeeb-domain-independent, Jeeb-agnostic and reusable?"
+    },
+    {
+      "id": "q4_new_repository",
+      "question": "As a last resort, is a new repository required?"
+    }
+  ],
+  "architecture_rules": [
+    "The gateway is a stateless BFF with no Postgres connection or durable state.",
+    "UPG is not used by Jeeb.",
+    "Shared microservices must remain Jeeb-domain-agnostic.",
+    "Extensions must be additive and backward-compatible unless separately approved.",
+    "All wallet value changes are performed through wallet transactions.",
+    "No new repository is currently required."
+  ],
+  "points": [
+    {
+      "id": "cod-settlements",
+      "number": 1,
+      "category": "Finance",
+      "responsibility": "COD settlements",
+      "current_data": { "tables": ["settlements"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. wallet-service already provides wallet holders, multiple wallets and transaction legs.",
+        "q2_other_olivium_service": "No. UPG is excluded and payment-gateway/OliviumPay have the wrong boundary.",
+        "q3_reusable_extension": "No COD-specific extension is required. Use the existing generic wallet and transaction contracts.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "No, you can create 2 wallets per jeeber, you don't need to do any modification",
+      "review_status": "revised",
+      "final_answer": {
+        "owner": "wallet-service",
+        "plan": "Delete gateway settlement persistence. Create one wallet holder per Jeeber with the two configured wallets following Creamati, and record COD earnings and fees as wallet transaction legs.",
+        "constraints": ["No Jeeb-specific wallet schema", "No direct balance mutation", "Gateway stores no financial state"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "settlement-batches",
+      "number": 2,
+      "category": "Finance",
+      "responsibility": "Weekly settlement batches",
+      "current_data": { "tables": ["settlement_batches"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. wallet-service transaction headers and statuses are the closest existing representation.",
+        "q2_other_olivium_service": "No suitable non-UPG service exists.",
+        "q3_reusable_extension": "Add generic transaction search/filtering and a durable external reference only if required for stable batch lookup.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": null,
+      "review_status": "answered_pending_explicit_approval",
+      "final_answer": {
+        "owner": "wallet-service",
+        "plan": "Delete gateway settlement_batches. Represent a batch with a wallet transaction header and its detail legs; pending means open, executed means paid and aborted means cancelled. CMS queries by generic service, tag, date and status.",
+        "constraints": ["No gateway batch table", "Scheduling remains outside wallet-service"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "settlement-enqueue",
+      "number": 3,
+      "category": "Finance",
+      "responsibility": "Settlement enqueue idempotency",
+      "current_data": { "tables": ["settlement_enqueue"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. wallet-service transactions are the financial write boundary.",
+        "q2_other_olivium_service": "No additional service is needed.",
+        "q3_reusable_extension": "Add a generic durable Idempotency-Key and request fingerprint to transaction initiation because the current API creates a new transaction ID on every call.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "No, all wallet changes must be done through transactions only, you can check the cremat implementation",
+      "review_status": "revised",
+      "final_answer": {
+        "owner": "wallet-service",
+        "plan": "Reject and delete settlement_enqueue. Retry the same idempotent wallet transaction instead of persisting an enqueue marker.",
+        "constraints": ["Every wallet value change is a transaction", "Do not move the marker to state-service"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "settlement-ledger",
+      "number": 4,
+      "category": "Finance",
+      "responsibility": "Settlement ledger idempotency",
+      "current_data": { "tables": ["settlement_ledger_entries"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. wallet-service TransactionHeader and TransactionDetails are the canonical ledger.",
+        "q2_other_olivium_service": "No. OliviumPay supplies patterns only and cannot own Jeeb finance truth.",
+        "q3_reusable_extension": "Make generic multi-leg execution atomic and expose projections over executed transactions.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": null,
+      "review_status": "answered_pending_explicit_approval",
+      "final_answer": {
+        "owner": "wallet-service",
+        "plan": "Delete gateway settlement_ledger_entries and its reconciler. Transaction headers and details become the only ledger; earnings are projections over executed transactions.",
+        "constraints": ["Atomic multi-leg execution", "No duplicate earnings truth"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "delivery-mirror",
+      "number": 5,
+      "category": "Core",
+      "responsibility": "Delivery/request mirror",
+      "current_data": { "tables": ["delivery_requests"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. delivery-service owns the canonical delivery aggregate.",
+        "q2_other_olivium_service": "No. order-service represents ecommerce baskets, not delivery execution.",
+        "q3_reusable_extension": "Add only neutral requester, assignee, metadata and external-reference fields and filters.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "Okay, but no jeeb specific domoain must be added to the delivery microservice",
+      "review_status": "approved_with_guardrails",
+      "final_answer": {
+        "owner": "delivery-service",
+        "plan": "Move the full delivery read model and filtered lists to delivery-service, migrate records and delete the gateway mirror.",
+        "constraints": ["No Jeeb-specific domain logic or vocabulary"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "user-projection",
+      "number": 6,
+      "category": "Core",
+      "responsibility": "User projection/cache",
+      "current_data": { "tables": ["users"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. user-management, role-service, ban-service and feedback-service already own the source data.",
+        "q2_other_olivium_service": "No additional service is needed.",
+        "q3_reusable_extension": "None by default; compose existing APIs.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "approved",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "user-management + role-service + ban-service + feedback-service",
+        "plan": "Gateway composes the owner APIs directly and deletes its cached user projection.",
+        "constraints": ["No gateway identity cache or Postgres"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "admin-audit",
+      "number": 7,
+      "category": "Core",
+      "responsibility": "Administrator audit",
+      "current_data": { "tables": ["admin_actions"], "surface": "CMS only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. jeeb-state-service has immutable case audit and can own a generic audit stream.",
+        "q2_other_olivium_service": "No reusable audit owner is closer.",
+        "q3_reusable_extension": "Add generic immutable events keyed by application, actor, action and opaque resource reference.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "Approved",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "jeeb-state-service",
+        "plan": "Add append-only generic audit event and query APIs; the gateway only submits and composes events.",
+        "constraints": ["Domain services retain their transactional histories"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "account-deletions",
+      "number": 8,
+      "category": "Core",
+      "responsibility": "Account deletion lifecycle",
+      "current_data": { "tables": ["account_deletions"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. jeeb-state-service plus existing domain APIs can own durable workflow state and deletion actions.",
+        "q2_other_olivium_service": "Yes. background-worker supplies scheduling and retry.",
+        "q3_reusable_extension": "Add generic due-work leasing/CAS and production-safe scheduled execution.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "Approved",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "jeeb-state-service + background-worker",
+        "plan": "Store an opaque deletion workflow in state-service; background-worker invokes idempotent domain-owner actions through the stateless gateway orchestrator.",
+        "constraints": ["Harden worker leasing and high availability"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "data-exports",
+      "number": 9,
+      "category": "Core",
+      "responsibility": "Personal data exports",
+      "current_data": { "tables": ["data_exports"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Partly. jeeb-state-service can own generic job metadata while each domain exposes subject-scoped export fragments.",
+        "q2_other_olivium_service": "Yes. background-worker executes jobs and an approved private object store owns artifacts.",
+        "q3_reusable_extension": "Add generic job metadata and domain export-fragment APIs; never store export bytes in state-service.",
+        "q4_new_repository": "Only if no approved organization-wide private blob platform exists; never create a Jeeb-specific export repository."
+      },
+      "review_comment": "Okay, but no postgress of state must be done on the gateway",
+      "review_status": "approved_with_guardrails",
+      "final_answer": {
+        "owner": "jeeb-state-service + background-worker + private object storage",
+        "plan": "Store job metadata in state-service, aggregate domain fragments in the worker and store encrypted artifacts privately.",
+        "constraints": ["Zero gateway Postgres", "Zero gateway job state", "Zero gateway artifact storage"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "delivery-escalations",
+      "number": 10,
+      "category": "Core",
+      "responsibility": "Delivery OTP escalations",
+      "current_data": { "tables": ["admin_escalations"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. delivery-service owns delivery handover and exception state.",
+        "q2_other_olivium_service": "No. Identity OTP lock state is a different bounded context.",
+        "q3_reusable_extension": "Add generic delivery exceptions with opaque category/source, status, due time, lease, assignment, notes and idempotency.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "Okay, but keep the delivery service independant of jeeb domain or OTP, try to make it generic and background compatible",
+      "review_status": "approved_with_guardrails",
+      "final_answer": {
+        "owner": "delivery-service",
+        "plan": "Persist generic background-compatible delivery exceptions, expose list/update APIs, migrate open records and remove the gateway queue.",
+        "constraints": ["No Jeeb semantics", "No OTP semantics", "Background-worker compatible"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "flagged-requests",
+      "number": 11,
+      "category": "Operations",
+      "responsibility": "Flagged prohibited requests",
+      "current_data": { "tables": ["flagged_requests"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. jeeb-state-service already provides a generic human-review case engine.",
+        "q2_other_olivium_service": "No detector service owns durable human review.",
+        "q3_reusable_extension": "Add opaque case attributes and generic cleared/upheld resolution metadata.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "approved",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "jeeb-state-service",
+        "plan": "Create moderation findings as generic cases, migrate open reviews and remove the gateway table.",
+        "constraints": [],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "prohibited-catalog",
+      "number": 12,
+      "category": "Content",
+      "responsibility": "Prohibited catalog and acknowledgements",
+      "current_data": { "tables": ["prohibited_items", "prohibited_item_acks"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. ban-service owns generic namespaced moderation lists, severity, screening, versions and CRUD.",
+        "q2_other_olivium_service": "No. catalog-service is the wrong moderation boundary.",
+        "q3_reusable_extension": "Add durable shared storage, per-list versions and idempotent subject acknowledgements.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "Approved, but no in-microservices authorization needed",
+      "review_status": "approved_with_guardrails",
+      "final_answer": {
+        "owner": "ban-service",
+        "plan": "Use list_key=jeeb, add durable list versions and acknowledgements, migrate the catalog and remove gateway persistence.",
+        "constraints": ["No authorization inside ban-service", "Gateway remains the capability boundary"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "jeeber-availability",
+      "number": 13,
+      "category": "Operations",
+      "responsibility": "Jeeber availability and zones",
+      "current_data": { "tables": ["jeeber_availability"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. delivery-service already owns matching availability.",
+        "q2_other_olivium_service": "No. heartbeat and geolocation would create a second business-availability truth.",
+        "q3_reusable_extension": "Use generic provider availability with zone key, last interaction, filters and offline events.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "approved",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "delivery-service",
+        "plan": "Complete generic provider-availability reads/events, reconcile active providers and remove the gateway mirror and sweeper.",
+        "constraints": ["Keep Jeeb vocabulary in the gateway projection"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "device-tokens",
+      "number": 14,
+      "category": "Operations",
+      "responsibility": "Push device tokens",
+      "current_data": { "tables": ["device_tokens"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. push-notification owns registration and token revocation.",
+        "q2_other_olivium_service": "No additional service is needed.",
+        "q3_reusable_extension": "None required for ownership migration.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "approved",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "push-notification",
+        "plan": "Reconcile active registrations, make push-notification authoritative and delete the gateway token mirror.",
+        "constraints": [],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "delivery-tiers",
+      "number": 15,
+      "category": "Core",
+      "responsibility": "Delivery tiers",
+      "current_data": { "tables": ["tiers"], "surface": "Both" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. delivery-service already exposes and consumes the tier registry.",
+        "q2_other_olivium_service": "No. pricing-service owns SKU pricing, not delivery service levels.",
+        "q3_reusable_extension": "Persist a tenant-scoped generic service-level catalog with CAS/ETag administration.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "Approved",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "delivery-service",
+        "plan": "Persist generic tenant-scoped service levels, migrate existing values and remove gateway tier storage.",
+        "constraints": ["No hard-coded Jeeb tier names"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "financial-anonymization",
+      "number": 16,
+      "category": "Finance",
+      "responsibility": "Financial anonymization",
+      "current_data": { "tables": ["financial_ledger_anonymization"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. wallet-service owns the financial rows, holders and system wallets.",
+        "q2_other_olivium_service": "No other service may mutate wallet-owned records.",
+        "q3_reusable_extension": "Add a generic idempotent holder close/pseudonymize operation; any balance closeout uses normal transaction legs.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "All wallet values must be done through transactions. but you have to create system wallet, check Creamat wallet configuration",
+      "review_status": "revised",
+      "final_answer": {
+        "owner": "wallet-service",
+        "plan": "Create the Guid.Empty __SYSTEM__ holder with one wallet per configured currency. Close or transfer balances only through a policy-approved wallet transaction, then deactivate and pseudonymize the holder while retaining required accounting facts.",
+        "constraints": ["Never edit balances directly", "Non-zero system funding must be a transaction", "Do not rewrite ledger values"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "notification-outbox",
+      "number": 17,
+      "category": "Operations",
+      "responsibility": "Notification dispatch outbox",
+      "current_data": { "tables": ["notification_dispatch_outbox"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. notification-service already persists notifications, attempts, delivery records and DLQ state.",
+        "q2_other_olivium_service": "No additional service is needed.",
+        "q3_reusable_extension": "Add generic pending, lease, attempt and next-attempt fields plus a worker without changing existing behavior.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "Agree but keep in mind no jeeb domain specific code must be written in this microservices, you can extend but without breaking changes",
+      "review_status": "approved_with_guardrails",
+      "final_answer": {
+        "owner": "notification-service",
+        "plan": "Move generic outbox creation and processing into notification-service, preserve existing APIs and delete the gateway worker and table.",
+        "constraints": ["No Jeeb-specific templates or schema", "Additive and backward-compatible only"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "push-retry",
+      "number": 18,
+      "category": "Operations",
+      "responsibility": "Push retry queue",
+      "current_data": { "tables": ["push_retry_queue"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. push-notification owns provider delivery and failure semantics.",
+        "q2_other_olivium_service": "No additional service is needed.",
+        "q3_reusable_extension": "Add nullable/defaulted dispatch state and a feature-gated worker while preserving current contracts.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "Agree but without introducing breaking change",
+      "review_status": "approved_with_guardrails",
+      "final_answer": {
+        "owner": "push-notification",
+        "plan": "Add backward-compatible retry processing to push_dispatch, migrate safe pending work and delete the gateway retry queue.",
+        "constraints": ["Retry only definite pre-provider failures", "Never retry an ambiguous FCM attempt", "No breaking changes"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "push-tracker",
+      "number": 19,
+      "category": "Operations",
+      "responsibility": "Push delivery tracker",
+      "current_data": { "tables": ["push_delivery_tracker"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. push-notification push_dispatch already records claim, outcome and error.",
+        "q2_other_olivium_service": "No additional service is needed.",
+        "q3_reusable_extension": "Add generic read-only operational queries only if current queries are insufficient.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "approved",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "push-notification",
+        "plan": "Use push_dispatch as the canonical ledger, expose required operational reads and delete the duplicate gateway tracker.",
+        "constraints": [],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "transcription-retry",
+      "number": 20,
+      "category": "Operations",
+      "responsibility": "Transcription fallback queue",
+      "current_data": { "tables": ["transcription_fallback_queue"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. voice-transcription-service owns audio, transcription and retry semantics.",
+        "q2_other_olivium_service": "No additional service is needed.",
+        "q3_reusable_extension": "Add leased and acknowledged jobs, status, queue depth and DLQ.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "agree",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "voice-transcription-service",
+        "plan": "Implement durable retry, status and DLQ in voice-transcription-service; migrate queued jobs and remove the gateway fallback queue.",
+        "constraints": ["Gateway only proxies the response"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "cms-surfaces",
+      "number": 21,
+      "category": "Content",
+      "responsibility": "CMS configuration and version history",
+      "current_data": { "tables": ["cms_surfaces", "cms_surface_versions"], "surface": "CMS only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Partly. jeeb-state-service stores opaque JSON but lacks publishing semantics.",
+        "q2_other_olivium_service": "Yes. bundler-service already owns generic JSON state and append-only history.",
+        "q3_reusable_extension": "Add application/document namespaces, draft CAS, atomic publish, immutable versions and diffs.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": "Agree",
+      "review_status": "approved",
+      "final_answer": {
+        "owner": "bundler-service",
+        "plan": "Harden and extend bundler-service generically, migrate drafts and published versions and remove gateway CMS tables.",
+        "constraints": ["Gateway remains a stateless BFF"],
+        "new_repository": false
+      }
+    },
+    {
+      "id": "wallet-direct-read",
+      "number": 22,
+      "category": "Finance",
+      "responsibility": "Direct wallet database read",
+      "current_data": { "tables": ["wallet-postgres.wallets", "wallet-postgres.transactionheader", "wallet-postgres.transactiondetails"], "surface": "Mobile APP only" },
+      "investigation_answers": {
+        "q1_existing_jeeb_service": "Yes. wallet-service owns every queried table; its HTTP API only lacks transaction list and detail reads.",
+        "q2_other_olivium_service": "No other service can legitimately serve wallet-owned records.",
+        "q3_reusable_extension": "Add generic holder-scoped transaction list/detail endpoints with filters, opaque pagination and signed debit/credit projections.",
+        "q4_new_repository": "No."
+      },
+      "review_comment": null,
+      "review_status": "answered_pending_explicit_approval",
+      "final_answer": {
+        "owner": "wallet-service",
+        "plan": "Add generic wallet transaction read APIs and indexes, compare API results with the old read, then delete WalletPostgres configuration, health checks and PostgresJeebWalletLedgerReader from the gateway.",
+        "constraints": ["Gateway calls wallet-service only", "No direct wallet database connection"],
+        "new_repository": false
+      }
+    }
+  ]
+}

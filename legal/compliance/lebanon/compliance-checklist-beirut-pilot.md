@@ -38,7 +38,7 @@ Until all four `TBD`s are filled the checklist cannot move past Section 1.
 | - | ----------------------------------------------------------------------------------------------------- | ------ | ----- | ----------------------------------------------------- |
 | 1.1 | Lebanese counsel engaged and on retainer                                                            | 🔴     | CEO   | Engagement letter                                     |
 | 1.2 | Company entity registered with Lebanese commercial registry                                          | 🔴     | CEO   | Commercial registry extract                           |
-| 1.3 | BdL position on Jeeb's classification confirmed (PSP / intermediary / out-of-scope) in writing       | 🔴     | CO + counsel | Letter from counsel summarising BdL response  |
+| 1.3 | BdL position on Jeeb's COD marketplace, cash-custody, commission, and payout arrangement confirmed in writing | 🔴 | CO + counsel | Letter from counsel summarising BdL response |
 | 1.4 | SIC reporting channel established; named liaison registered                                          | 🔴     | CO    | SIC acknowledgement                                   |
 | 1.5 | Terms of Service and Privacy Policy reviewed by Lebanese counsel and translated to Arabic            | 🔴     | DPO   | Counsel sign-off + locale parity check                |
 | 1.6 | Prohibited-items list reviewed against Lebanese law                                                   | 🔴     | CO + counsel | Annotated diff to `legal/en/prohibited-items.md` |
@@ -88,7 +88,7 @@ Until all four `TBD`s are filled the checklist cannot move past Section 1.
 | # | Item                                                                                                  | Status | Owner | Evidence                                              |
 | - | ----------------------------------------------------------------------------------------------------- | ------ | ----- | ----------------------------------------------------- |
 | 5.1 | Vetting partner: SOC 2 Type II or ISO 27001 in date                                                   | 🔴     | DPO   | Cert / report                                         |
-| 5.2 | Payment processor (`unified_payment_gateway` upstream): KYC adequacy attested                         | 🔴     | CO    | Counterparty letter                                   |
+| 5.2 | Internal UPG COD boundary sends no raw KYC artefacts and exposes operator actions only through the gateway | 🔴  | CO + SRE | Data-flow test + production config review         |
 | 5.3 | Object-storage provider: data-locality contract in place (EU/ME footprint)                            | 🔴     | SRE   | Contract excerpt                                      |
 | 5.4 | All KYC-touching third parties listed in a Processor Register                                         | 🔴     | DPO   | Register link                                         |
 

@@ -46,7 +46,7 @@ We collect and process the following categories of personal data:
 | **Authentication**             | OTP history, device identifiers, login timestamps, IP address, session tokens                    | Your device          |
 | **Location**                   | Real-time GPS coordinates during an active Request, pickup and drop-off addresses, route data    | Your device          |
 | **Transactional**              | Request history, delivery details, ratings, reviews, in-app chat messages, voice notes           | You + counterparty   |
-| **Payment**                    | Tokenised card details (via PCI-DSS compliant PSP), bank account or e-wallet details for Jeeber payouts | You via payment PSP  |
+| **COD settlement**             | Amount, currency, collection and reconciliation status, Jeeber payout destination details if supplied | Request parties / Jeeber |
 | **KYC / Compliance** (Jeebers) | Driving licence number, vehicle registration, insurance details, background-check results, selfie for identity verification | You + vetting partner|
 | **Device & Technical**         | Device model, operating system, app version, language settings, crash logs, performance data     | Your device          |
 
@@ -70,7 +70,7 @@ Lebanese law and international best practice:
 
 | Legal Basis                   | Purpose                                                                                               |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- |
-| **Performance of contract**   | Account creation, Request matching, payment processing, delivery coordination, customer support       |
+| **Performance of contract**   | Account creation, Request matching, COD recording and reconciliation, delivery coordination, customer support |
 | **Legal obligation**          | Tax record-keeping, KYC/AML compliance, responding to lawful requests from Lebanese judicial or regulatory authorities |
 | **Legitimate interests**      | Fraud prevention, safety enforcement, service improvement, aggregated analytics (no individual advertising profiles) |
 | **Consent**                   | Marketing communications, optional location collection outside active Requests, processing of sensitive data (selfie verification) |
@@ -89,8 +89,8 @@ We use personal data for the following purposes:
 - **Account management:** Create, authenticate, and manage User accounts.
 - **Service delivery:** Match Clients with available Jeebers, route
   Requests, compute pricing, and facilitate delivery.
-- **Payment processing:** Process Client payments, calculate Platform
-  Commission, and settle Jeeber payouts.
+- **COD settlement:** Record cash collection, reconcile cash-on-delivery,
+  calculate Platform Commission, and settle amounts owed to Jeebers.
 - **Communication:** Enable in-app chat and voice between counterparties;
   send service-related notifications.
 - **Safety and compliance:** Enforce the Terms of Service and Prohibited
@@ -118,7 +118,6 @@ and only for the stated purposes:
 | Recipient                                | Purpose                                                                     | Data Shared                                    |
 | ---------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------- |
 | **Counterparty to a Request**            | Enable delivery hand-off and coordination                                   | Name, limited contact info, location during Request |
-| **Payment service providers**            | Process payments and Jeeber payouts (PCI-DSS compliant)                     | Tokenised payment data, transaction amounts    |
 | **Map and navigation providers**         | Route calculation, ETA estimation, address geocoding                        | Location data (anonymised where possible)      |
 | **KYC and background-check providers**   | Verify Jeeber identity and eligibility                                      | Identity documents, selfie, licence details    |
 | **Cloud infrastructure providers**       | Host and operate the Platform                                               | All data (encrypted at rest and in transit)     |
@@ -199,7 +198,7 @@ purpose for which it was collected and to comply with legal obligations:
 | --------------------------------- | ----------------------------------------------------------------------------- |
 | Active account data               | Duration of the active account                                                |
 | Request history (operational)     | 24 months after the last Request, then anonymised or deleted                  |
-| Payment and tax records           | As required by Lebanese tax law (currently 10 years per Article 107 of the Income Tax Law) |
+| COD settlement and tax records    | As required by Lebanese tax law (currently 10 years per Article 107 of the Income Tax Law) |
 | Chat and voice messages           | 90 days after the Request is completed, then permanently deleted              |
 | KYC / identity documents          | Duration of the account + 5 years (per AML/KYC requirements)                 |
 | Background-check results          | Duration of the active Jeeber account + 2 years                              |

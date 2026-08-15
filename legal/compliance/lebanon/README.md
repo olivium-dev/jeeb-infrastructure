@@ -22,11 +22,10 @@ Jeeb platform.
 
 ## Regulatory authorities referenced
 
-- **Banque du Liban (BdL)** — central bank, issues AML/CFT circulars
-  applicable to payment service providers and fintech intermediaries.
-  Relevant: Basic Circular No. 83 (AML/CFT), Basic Circular No. 81 (electronic
-  banking and financial operations), Basic Circular No. 69 (electronic payment
-  cards).
+- **Banque du Liban (BdL)** — central bank and AML/CFT authority for regulated
+  banking and financial activity. Jeeb's UPG is documented here as an internal
+  cash-on-delivery record, not as an electronic-payment provider or card
+  gateway. Counsel must separately assess any future regulated payout provider.
 - **Special Investigation Commission (SIC) / الهيئة الخاصة للتحقيق** —
   Lebanon's Financial Intelligence Unit, established under Law 318/2001 and
   reinforced by Law 44/2015 (Fighting Money Laundering and Terrorist Financing).

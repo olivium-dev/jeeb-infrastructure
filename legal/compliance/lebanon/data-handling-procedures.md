@@ -138,9 +138,10 @@ support agent, reviewer, on-call SRE — operates under these procedures.
 
 - **Inside Jeeb:** strictly need-to-know per §3.
 - **To vetting partner:** per §2.3; covered by the executed DPA.
-- **To payment processor (`unified_payment_gateway` upstream):** only
-  status (`verified=true/false`) and tier; never raw images or full ID
-  numbers. The unified_payment_gateway never holds primary KYC artefacts.
+- **To the internal COD owner (`unified_payment_gateway`):** only the opaque
+  subject identifier and the minimum status/tier required by the approved COD
+  settlement flow; never raw images, evidence URLs, or full ID numbers. UPG
+  never holds primary KYC artefacts.
 - **To authorities (SIC, courts):** only on a written, lawful request;
   CO + counsel review before release. Production-environment access for
   inspectors is forbidden — we produce a curated dossier instead.

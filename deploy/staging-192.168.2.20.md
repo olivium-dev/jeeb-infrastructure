@@ -1,8 +1,8 @@
-# Jeeb staging deployment: 192.168.2.20
+# Jeeb staging deployment: [decommissioned-host]
 
 ## Deployment contract
 
-- Target: `olivium-ephemerals` at `192.168.2.20`.
+- Target: `olivium-ephemerals` at `[decommissioned-host]`.
 - Public application hostname: `jeeb-staging.fds-1.com`.
 - GitHub Actions SSH hostname: `jeeb-staging-ssh.fds-1.com`.
 - Workflow name in every active repository: `jeeb-staging-deploy`.
@@ -14,7 +14,7 @@
 - Update policy: stop-first with health-gated rollback and bounded CPU, memory,
   and JSON log rotation.
 
-The workflow rejects a target unless both the hostname and `192.168.2.20` are
+The workflow rejects a target unless both the hostname and `[decommissioned-host]` are
 present. GitHub-hosted runners reach SSH through Cloudflare Access using a
 strict `known_hosts` entry. Each run uses an isolated, temporary remote Docker
 credential directory so repository-scoped GHCR tokens cannot race with other
@@ -52,7 +52,7 @@ workflow or source file. The fleet uses the following secret names as needed:
 - PostgreSQL: `JEEB_DB_HOST`, `JEEB_DB_PORT`, `JEEB_DB_USERNAME`,
   `JEEB_DB_PASSWORD`, `JEEB_DATABASE_URL`, `JEEB_DB_CONNECTION`,
   `JEEB_STATE_DATABASE_URL`, `KYC_DATABASE_URL`, `JEEB_RTC_DATABASE_URL`.
-- MongoDB: `JEEB_MONGO_PORT`. The `.20` MongoDB instance currently has no
+- MongoDB: `JEEB_MONGO_PORT`. The `[decommissioned-host]` MongoDB instance currently has no
   `security.authorization` setting; access is constrained by its private bind
   addresses and UFW. The notification staging URI therefore contains no
   username or password. If MongoDB authentication is enabled later, rotate to
@@ -104,7 +104,7 @@ owner-gated, masked-call is local-only, and catalog is empty.
 ## Server prerequisites
 
 - Docker Engine is active and `ec2-user` is in the `docker` group.
-- the Swarm advertises `192.168.2.20` and `jeeb-staging-net` exists.
+- the Swarm advertises `[decommissioned-host]` and `jeeb-staging-net` exists.
 - PostgreSQL, MongoDB, and Redis listen on their intended private interfaces;
   UFW allows their ports only from the local Docker gateway subnet.
 - `/opt/jeeb-staging-cdn/uploads` exists with deployment-user/Docker ownership.
@@ -115,7 +115,7 @@ owner-gated, masked-call is local-only, and catalog is empty.
 
 1. Confirm the Cloudflare systemd unit and the public tunnel health endpoint.
 2. Confirm Cloudflare SSH reaches hostname `olivium-ephemerals` and that the
-   target has `192.168.2.20`.
+   target has `[decommissioned-host]`.
 3. Dispatch `jeeb-staging-deploy` for dependency services first.
 4. Require a successful Actions health gate and `1/1` Swarm replicas for every
    dependency.

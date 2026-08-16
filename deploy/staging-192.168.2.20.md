@@ -99,7 +99,9 @@ Every full Swarm name is prefixed with `jeeb-staging-`.
 Repositories intentionally outside this fleet are not staging deploy targets:
 matching is retired, score-taking was removed, unified payment gateway is no
 longer used for the COD-only flow, auth-service is redundant, role-service is
-owner-gated, masked-call is local-only, and catalog is empty.
+RETIRED (owner decision O8, 2026-08-16 — its gateway client, flag and health check
+are deleted and the MSI unit is decommissioned; user-management owns roles),
+masked-call is local-only, and catalog is empty.
 
 ## Server prerequisites
 

@@ -2,10 +2,10 @@
 
 ## Current status
 
-`192.168.2.20` (`olivium-ephemerals`) is the active Jeeb staging host as of
-2026-08-18. Its previous decommissioned status is superseded. Historical
-retirement evidence remains historical; it must not be used to block approved
-staging deployments to this host.
+`192.168.2.20` (`olivium-ephemerals`) is the active Jeeb staging host. It was
+reactivated on 2026-08-18, superseding its previous decommissioned status.
+Historical retirement evidence remains historical; it must not be used to
+block approved staging deployments to this host.
 
 ## Deployment contract
 
@@ -18,8 +18,11 @@ staging deployments to this host.
 - Runtime: single-node Docker Swarm on the encrypted, attachable
   `jeeb-staging-net` overlay network.
 - Images: immutable Git-SHA tags in GHCR.
-- Update policy: stop-first with health-gated rollback and bounded CPU, memory,
-  and JSON log rotation.
+- Update policy: stop-first with fail-closed health gates and bounded CPU,
+  memory, and JSON log rotation.
+- Failure policy: pause the failed rollout in place. Do not perform an
+  automatic or manual rollback; correct the fault and dispatch a fresh run from
+  the corrected immutable commit.
 
 The workflow rejects a target unless both the hostname and `192.168.2.20` are
 present. GitHub-hosted runners reach SSH through Cloudflare Access using a
@@ -131,8 +134,9 @@ masked-call is local-only, and catalog is empty.
 5. Dispatch `jeeb-gateway` last, then verify its readiness endpoint through
    loopback and public HTTPS.
 6. On failure, inspect the Actions run and `docker service logs`; do not bypass
-   the health gate. Correct configuration or code, publish it, and make a fresh
-   dispatch so the run uses the new commit.
+   the health gate and do not roll back automatically or manually. Leave the
+   rollout paused, correct configuration or code, publish it, and make a fresh
+   dispatch so the run uses the corrected immutable commit.
 
 Useful non-secret checks:
 

@@ -41,6 +41,12 @@ Deployment infrastructure for the Jeeb platform using Docker Swarm + nginx on ho
 
 ## Environments
 
+The authoritative active-staging contract is
+[`deploy/staging-192.168.2.20.md`](deploy/staging-192.168.2.20.md). It identifies
+`192.168.2.20` (`olivium-ephemerals`) as the live staging host; older VPS
+bootstrap examples below are historical setup guidance, not the active staging
+target.
+
 | Env        | Deployment Method                              | TLS               | URL                     |
 | ---------- | ---------------------------------------------- | ----------------- | ----------------------- |
 | local      | `docker compose` (legacy-compose/)             | none              | http://localhost:5000   |

@@ -225,6 +225,10 @@ assert_link_release "$CMS_ROOT/current" release-001
 
 run_deploy "$release_two"
 assert_link_release "$CMS_ROOT/current" release-002
+[ ! -e "$CMS_ROOT/previous" ] && [ ! -L "$CMS_ROOT/previous" ] || {
+  echo "Legacy release pointer must not remain after deployment" >&2
+  exit 1
+}
 
 # Reusing an identical release is idempotent.
 run_deploy "$release_two"

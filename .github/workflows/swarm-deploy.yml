@@ -178,31 +178,48 @@ jobs:
 
           REPLICAS=$(ssh jeeb-vps "docker service ls --filter name=${SERVICE_NAME} --format '{{.Replicas}}'")
           echo "Replicas: $REPLICAS"
-          if echo "$REPLICAS" | grep -q "0/"; then
-            echo "✗ No running replicas"
+          DESIRED_REPLICAS=$(ssh jeeb-vps "docker service inspect --format='{{.Spec.Mode.Replicated.Replicas}}' '${SERVICE_NAME}'")
+          [ "$REPLICAS" = "${DESIRED_REPLICAS}/${DESIRED_REPLICAS}" ] || {
+            echo "✗ Service has not converged to its exact replica count"
             exit 1
-          fi
+          }
 
           FULL_IMAGE="ghcr.io/olivium-dev/${SERVICE_NAME}:${{ inputs.image_tag }}"
-          EXPECTED_DIGEST=$(ssh jeeb-vps "docker image inspect --format='{{index .RepoDigests 0}}' '${FULL_IMAGE}'" | awk -F@ '{print $2}')
-          [ -n "$EXPECTED_DIGEST" ] || { echo "✗ Could not resolve requested image digest"; exit 1; }
+          IMAGE_REPOSITORY="${FULL_IMAGE%:*}"
+          EXPECTED_DIGEST_REF=$(ssh jeeb-vps "docker image inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' '${FULL_IMAGE}'" \
+            | awk -v prefix="${IMAGE_REPOSITORY}@" 'index($0, prefix) == 1 { print; exit }')
+          EXPECTED_IMAGE_ID=$(ssh jeeb-vps "docker image inspect --format='{{.Id}}' '${FULL_IMAGE}'")
+          [ -n "$EXPECTED_DIGEST_REF" ] || { echo "✗ Could not resolve requested image digest"; exit 1; }
+          [ -n "$EXPECTED_IMAGE_ID" ] || { echo "✗ Could not resolve requested image ID"; exit 1; }
+          EXPECTED_SERVICE_IMAGE="${FULL_IMAGE}@${EXPECTED_DIGEST_REF##*@}"
 
           SERVICE_IMAGE=$(ssh jeeb-vps "docker service inspect --format='{{.Spec.TaskTemplate.ContainerSpec.Image}}' '${SERVICE_NAME}'")
           case "$SERVICE_IMAGE" in
-            "${FULL_IMAGE}@${EXPECTED_DIGEST}") ;;
+            "$EXPECTED_SERVICE_IMAGE") ;;
             *) echo "✗ Service spec image differs from the requested immutable image"; exit 1 ;;
           esac
 
-          TASK_IMAGES=$(ssh jeeb-vps "docker service ps --filter desired-state=running --format '{{.ID}}' '${SERVICE_NAME}' | xargs -r docker inspect --format '{{.Spec.ContainerSpec.Image}}'")
-          [ -n "$TASK_IMAGES" ] || { echo "✗ No running task image could be inspected"; exit 1; }
-          while IFS= read -r task_image; do
-            [ "$task_image" = "${FULL_IMAGE}@${EXPECTED_DIGEST}" ] || {
-              echo "✗ A running task differs from the requested immutable image"
+          CONTAINER_EVIDENCE=$(ssh jeeb-vps "docker ps --filter 'label=com.docker.swarm.service.name=${SERVICE_NAME}' --format '{{.ID}}'")
+          CONTAINER_COUNT=$(printf '%s\n' "$CONTAINER_EVIDENCE" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
+          [ "$CONTAINER_COUNT" = "$DESIRED_REPLICAS" ] || {
+            echo "✗ Running container count differs from the desired replica count"
+            exit 1
+          }
+          while IFS= read -r container_id; do
+            [ -n "$container_id" ] || continue
+            task_image=$(ssh jeeb-vps "docker inspect --format='{{.Config.Image}}' '$container_id'")
+            task_image_id=$(ssh jeeb-vps "docker inspect --format='{{.Image}}' '$container_id'")
+            [ "$task_image" = "$EXPECTED_SERVICE_IMAGE" ] || {
+              echo "✗ A running container differs from the requested immutable image"
               exit 1
             }
-          done <<< "$TASK_IMAGES"
+            [ "$task_image_id" = "$EXPECTED_IMAGE_ID" ] || {
+              echo "✗ A running container differs from the requested image ID"
+              exit 1
+            }
+          done <<< "$CONTAINER_EVIDENCE"
 
-          echo "✓ Service and running tasks use the requested immutable image"
+          echo "✓ Service and running containers use the requested immutable image"
 
           echo ""
           echo "Final service status:"

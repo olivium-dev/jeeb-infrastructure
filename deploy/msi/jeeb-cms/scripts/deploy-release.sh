@@ -94,6 +94,12 @@ FINAL_DIR="$(canonical_path "$FINAL_DIR")"
 
 test_nginx || die "nginx configuration preflight failed"
 verify_dependencies || die "runtime dependency preflight failed"
+LEGACY_RELEASE_LINK="${CMS_ROOT}/previous"
+if [ -L "$LEGACY_RELEASE_LINK" ]; then
+  unlink "$LEGACY_RELEASE_LINK"
+elif [ -e "$LEGACY_RELEASE_LINK" ]; then
+  die "refusing to remove non-symlink legacy release pointer: $LEGACY_RELEASE_LINK"
+fi
 atomic_link "$FINAL_DIR" "$CURRENT_LINK"
 
 if activate_and_verify "$RELEASE_ID"; then

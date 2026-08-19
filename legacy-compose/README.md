@@ -58,8 +58,9 @@ This provides:
 If you need to migrate from the old compose-based production setup:
 
 1. Bootstrap the new VPS using `scripts/bootstrap-vps.sh`
-2. Use `.github/workflows/swarm-bootstrap-service.yml` to create services
-3. Use `.github/workflows/swarm-deploy.yml` for updates
+2. Deploy each service through its canonical repository workflow; that workflow
+   owns the build-produced immutable digest and exact runtime verification
+3. Keep datastore provisioning outside application deployment workflows
 4. Keep these compose files for local development parity
 
 ## Questions?

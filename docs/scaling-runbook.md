@@ -125,8 +125,8 @@ ssh "${DEPLOY_USER}@${DEPLOY_HOST}" docker node ls
 Swarm will not pre-emptively migrate existing tasks to a fresh node. Force
 a rebalance by triggering a no-op service update — this respects rolling
 update policy and stays zero-downtime (per
-[`olivium-tech-stack-rules`](https://github.com/olivium-dev): use
-`docker service update --image`, never `docker service rm` + create).
+[`olivium-tech-stack-rules`](https://github.com/olivium-dev): use an in-place
+service update with an immutable repository digest).
 
 ```bash
 ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "

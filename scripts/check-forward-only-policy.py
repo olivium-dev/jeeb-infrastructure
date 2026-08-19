@@ -78,6 +78,13 @@ BENIGN_CONTROLS = (
     "git checkout -- package.json",
 )
 
+MUTATION_CONTROLS = (
+    'ENGINE=docker; "$ENGINE" service update --image "$IMAGE" app',
+    "docker service create --name app image@sha256:" + "a" * 64,
+    "docker service scale app=0",
+    "docker stack deploy -c compose.yml app",
+)
+
 
 def tracked_utf8():
     names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT)
@@ -120,9 +127,13 @@ def main() -> int:
         return 1
 
     mutation_command = re.compile(
-        r"(?:\bdocker\b|\bDOCKER_BIN\b)[^\n]*\b(?:service\s+(?:create|update)|stack\s+deploy)\b",
+        r"\b(?:service\s+(?:create|update|scale)|stack\s+deploy)\b",
         re.I,
     )
+    for control in MUTATION_CONTROLS:
+        if not mutation_command.search(control):
+            print(f"mutation inventory negative control was not rejected: {control}")
+            return 2
     executable_mutations = [
         path
         for path, source in files

@@ -19,7 +19,10 @@ class NginxContractTests(unittest.TestCase):
     def test_private_listener_and_backoffice_host(self) -> None:
         self.assertIn("listen 80;", self.text)
         self.assertNotIn("listen 127.0.0.1:10100;", self.text)
-        self.assertIn("server_name backoffice.jeeb.fds-1.com;", self.text)
+        self.assertIn(
+            "server_name backoffice.jeeb.fds-1.com cms.jeeb.fds-1.com;",
+            self.text,
+        )
         self.assertIn("root /opt/jeeb-cms/current;", self.text)
 
     def test_gateway_is_same_origin_and_targets_native_msi_gateway(self) -> None:

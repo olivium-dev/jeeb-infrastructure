@@ -1,7 +1,7 @@
 name: Deploy Nginx Configuration
 
 # Deploys nginx configuration to the Jeeb VPS.
-# Uses the Rahma gold-standard pipeline: validate → backup → test → apply → reload → verify
+# Forward-only pipeline: validate → test → apply → reload → verify
 
 on:
   push:
@@ -81,30 +81,7 @@ jobs:
           "
 
       # ═══════════════════════════════════════════════════════════════════════════
-      # 4. Backup current nginx configuration (gold-standard Rahma pattern)
-      # ═══════════════════════════════════════════════════════════════════════════
-      - name: Backup current nginx configuration
-        run: |
-          echo "==> Creating backup of current nginx configuration..."
-          ssh jeeb-vps "
-            BACKUP_DIR=/etc/nginx/backups/\$(date +%Y%m%d-%H%M%S)
-            sudo mkdir -p \$BACKUP_DIR
-            
-            # Backup main files
-            sudo cp /etc/nginx/nginx.conf \$BACKUP_DIR/nginx.conf.bak 2>/dev/null || echo 'nginx.conf not present'
-            sudo cp /etc/nginx/sites-available/jeeb.fds-1.com.conf \$BACKUP_DIR/jeeb.fds-1.com.conf.bak 2>/dev/null || echo 'site config not present'
-            
-            # Backup entire sites-available if exists
-            if [ -d /etc/nginx/sites-available ]; then
-              sudo cp -r /etc/nginx/sites-available \$BACKUP_DIR/
-            fi
-            
-            echo \"Backup completed in \$BACKUP_DIR\"
-            ls -la \$BACKUP_DIR/
-          "
-
-      # ═══════════════════════════════════════════════════════════════════════════
-      # 5. Deploy files to /tmp/ first (staging area)
+      # 4. Deploy files to /tmp/ first (staging area)
       # ═══════════════════════════════════════════════════════════════════════════
       - name: Deploy nginx files to staging area
         run: |
@@ -124,7 +101,7 @@ jobs:
           ssh jeeb-vps "ls -la /tmp/nginx-deploy/"
 
       # ═══════════════════════════════════════════════════════════════════════════
-      # 6. Pre-flight nginx test (FAIL FAST before applying — Rahma pattern)
+      # 5. Pre-flight nginx test (FAIL FAST before applying — Rahma pattern)
       # ═══════════════════════════════════════════════════════════════════════════
       - name: Test nginx configuration (pre-flight)
         run: |
@@ -152,7 +129,7 @@ jobs:
           "
 
       # ═══════════════════════════════════════════════════════════════════════════
-      # 7. Apply configuration files
+      # 6. Apply configuration files
       # ═══════════════════════════════════════════════════════════════════════════
       - name: Apply nginx configuration
         run: |
@@ -189,7 +166,7 @@ jobs:
           "
 
       # ═══════════════════════════════════════════════════════════════════════════
-      # 8. Reload nginx
+      # 7. Reload nginx
       # ═══════════════════════════════════════════════════════════════════════════
       - name: Reload nginx
         run: |
@@ -200,7 +177,7 @@ jobs:
           "
 
       # ═══════════════════════════════════════════════════════════════════════════
-      # 9. Verify deployment (Rahma verification pattern)
+      # 8. Verify deployment (Rahma verification pattern)
       # ═══════════════════════════════════════════════════════════════════════════
       - name: Verify deployment
         run: |
@@ -227,7 +204,7 @@ jobs:
           echo "✓ Nginx deployment verified successfully"
 
       # ═══════════════════════════════════════════════════════════════════════════
-      # 10. Cleanup temporary files (always runs)
+      # 9. Cleanup temporary files (always runs)
       # ═══════════════════════════════════════════════════════════════════════════
       - name: Cleanup temporary files
         if: always()

@@ -129,6 +129,47 @@ workflow validates and normalizes it without logging it, then creates a
 service-specific Docker config. No secret value should appear in this runbook,
 workflow logs, commits, or shell history.
 
+## Staging datastore isolation
+
+PostgreSQL 16, MongoDB 7, and Redis 7 run as native systemd services on
+`192.168.2.20`; no Jeeb database engine runs in Docker. Staging application
+containers use only the following staging-owned databases and Redis logical
+indexes. The unsuffixed databases remain separate source/dev stores and must
+not be referenced by a staging workflow.
+
+| Owner | Staging datastore |
+|---|---|
+| user-management | PostgreSQL `jeeb-user-management_staging` |
+| one-time-password | PostgreSQL `jeeb-otpdb_staging` |
+| wallet-service | PostgreSQL `jeeb-wallet_staging` |
+| feedback-service | PostgreSQL `feedback_service_staging` |
+| jeeb-state-service | PostgreSQL `jeeb_state_staging` |
+| kyc-service | PostgreSQL `jeeb_kyc_staging` |
+| push-notification | PostgreSQL `jeeb-push-notifications_staging` |
+| realtime-comunication-service | PostgreSQL `jeeb_realtime_comm_staging`; Redis db 5 |
+| contract-signing-service | PostgreSQL `jeeb_contract_signing_staging` |
+| form-builder-service | PostgreSQL `jeeb_form_builder_staging` |
+| geolocation-service | PostgreSQL `jeeb-location_staging` |
+| delivery-service | PostgreSQL `delivery_staging` |
+| compliment-service | PostgreSQL `compliment_staging` |
+| offer-service | PostgreSQL `offer_service_staging` |
+| remote-user-preferences | PostgreSQL `jeeb_remote_user_preferences_staging` |
+| settlement-service | PostgreSQL `jeeb_settlement_staging` |
+| bundler-service | PostgreSQL `jeeb_bundler_staging` |
+| notification-service | MongoDB `jeeb_notifications_staging` |
+| chat-service | Firestore named database `staging` in project `jeeb-5a293` |
+| ban-service | Redis db 3 |
+| heart-beat | Redis db 4 |
+| voice-transcription-service | Redis db 6 |
+| jeeb-gateway | Redis db 1; rate limiting in Redis db 2; current main is PostgreSQL-free |
+| cdn-service | Host path `/opt/jeeb-staging-cdn/uploads` |
+
+Database basenames are enforced in the repository-scoped staging workflows;
+opaque URL secrets are insufficient on their own. Before the 2026-08-19
+cutover, every PostgreSQL and MongoDB source was captured to a timestamped,
+host-owned dump and restored into the corresponding staging target. Future
+schema or seed changes must target only the owning staging datastore.
+
 ## Active service inventory
 
 | Repository | Swarm service suffix | Host port | Health gate |
@@ -154,6 +195,8 @@ workflow logs, commits, or shell history.
 | `compliment-service` | `compliment-service` | 10036 | `/health` |
 | `offer-service` | `offer-service` | 10063 | `/health` |
 | `heart-beat` | `heart-beat` | 10075 | `/health/ready` |
+| `settlement-service` | `settlement-service` | internal only | `/health/ready` |
+| `bundler-service` | `bundler-service` | 10056 | `/health/ready` |
 | `jeeb-gateway` | `jeeb-gateway` | 10000 | `/health/ready` |
 
 Every full Swarm name is prefixed with `jeeb-staging-`.

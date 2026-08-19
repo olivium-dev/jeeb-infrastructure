@@ -8,7 +8,6 @@ VALIDATOR="${JEEB_CMS_VALIDATOR:-${TOOLS_DIR}/validate-release.py}"
 CMS_ROOT="${JEEB_CMS_ROOT:-/opt/jeeb-cms}"
 RELEASES_DIR="${CMS_ROOT}/releases"
 CURRENT_LINK="${CMS_ROOT}/current"
-PREVIOUS_LINK="${CMS_ROOT}/previous"
 NGINX_BIN="${JEEB_CMS_NGINX_BIN:-nginx}"
 SYSTEMCTL_BIN="${JEEB_CMS_SYSTEMCTL_BIN:-systemctl}"
 CURL_BIN="${JEEB_CMS_CURL_BIN:-curl}"
@@ -170,6 +169,26 @@ print(served.get("releaseId", ""))
   local_manifest_sha="$(sha256_file "$current_target/SHA256SUMS")" || return 1
   if [ "$served_manifest_sha" != "$local_manifest_sha" ]; then
     echo "ERROR: served SHA256SUMS does not match the active release" >&2
+    return 1
+  fi
+}
+
+verify_dependencies() {
+  local health
+  if ! command -v "$CURL_BIN" >/dev/null 2>&1; then
+    echo "ERROR: required command is unavailable: $CURL_BIN" >&2
+    return 1
+  fi
+  if ! health="$("$CURL_BIN" -fsS --max-time 10 "$HEALTH_URL")"; then
+    echo "ERROR: CMS health endpoint is unavailable" >&2
+    return 1
+  fi
+  if [ "$health" != "healthy" ]; then
+    echo "ERROR: unexpected CMS health response" >&2
+    return 1
+  fi
+  if ! "$CURL_BIN" -fsS --max-time 10 "$GATEWAY_READY_URL" >/dev/null; then
+    echo "ERROR: gateway readiness endpoint is unavailable" >&2
     return 1
   fi
 }

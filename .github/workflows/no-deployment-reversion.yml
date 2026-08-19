@@ -1,0 +1,17 @@
+name: No deployment reversion
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject deployment reversion behavior
+        run: bash scripts/check-no-deployment-reversion.sh

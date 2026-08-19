@@ -87,11 +87,7 @@ services:
         order: start-first
         parallelism: 1
         delay: 15s
-        failure_action: rollback
-        monitor: 30s
-      rollback_config:
-        parallelism: 1
-        delay: 10s
+        failure_action: pause
         monitor: 30s
       restart_policy:
         condition: on-failure

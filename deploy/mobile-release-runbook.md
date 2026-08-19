@@ -78,16 +78,17 @@ All in the `mobile-release` GitHub Environment (which has manual approval gating
 | App Store Connect: new TestFlight build in "Processing" or "Ready"    | https://appstoreconnect.apple.com                |
 | Build number > previous build for the same flavor                     | Both consoles                                    |
 
-## 6. Rollback
+## 6. Failed release response
 
-There is no "rollback an installed TestFlight build" — TestFlight and Play Internal are pre-release tracks, **not** production. Rollback options in order of preference:
+Release recovery is fix-forward. Stop further distribution where the store
+supports it, correct the defect on the current branch, and ship a new
+higher-numbered build. Never reuse a store build number or deploy an older
+artifact as the recovery action.
 
-1. **Cut a higher-numbered build of the previous good commit**: `git revert <bad-sha> && git tag v1.4.1 && git push --tags`. This is the only safe path because store version numbers must monotonically increase.
-2. **Expire the bad TestFlight build**: App Store Connect → TestFlight → select build → **Expire**. Stops new testers installing it. Existing installs are unaffected.
-3. **Halt the Play Internal release**: Play Console → Internal testing → release → **Halt rollout**. Does **not** uninstall; new testers cannot install.
-4. If a bad build was already promoted to Production: see `production-rollback.sh` for backend, and the **App Store Connect → Phased Release → Pause** action for iOS / **Play Console → Halt rollout** for Android.
-
-**Never** delete a build from a store to "undo" a release — version numbers cannot be reused.
+For an affected TestFlight build, expire it to prevent new installs. For Play
+Internal or a phased production release, halt further rollout while the
+corrected build passes CI and store review. Existing installs are handled by
+the corrected release and the incident communication plan.
 
 ## 7. Common failures
 

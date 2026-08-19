@@ -162,17 +162,6 @@ PY
   "$SCRIPTS_DIR/deploy-release.sh" "$artifact"
 }
 
-run_rollback() {
-  PATH="${STUB_DIR}:$PATH" \
-  JEEB_CMS_ROOT="$CMS_ROOT" \
-  JEEB_CMS_OWNER="" \
-  JEEB_CMS_NGINX_BIN="${STUB_DIR}/nginx" \
-  JEEB_CMS_SYSTEMCTL_BIN="${STUB_DIR}/systemctl" \
-  JEEB_CMS_CURL_BIN="${STUB_DIR}/curl" \
-  STUB_REAL_PYTHON="$REAL_PYTHON" \
-  "$SCRIPTS_DIR/rollback-release.sh" "$@"
-}
-
 assert_link_release() {
   local link_path="$1" expected="$2" actual
   actual="$(basename "$(python3 - "$link_path" <<'PY'
@@ -236,15 +225,14 @@ assert_link_release "$CMS_ROOT/current" release-001
 
 run_deploy "$release_two"
 assert_link_release "$CMS_ROOT/current" release-002
-assert_link_release "$CMS_ROOT/previous" release-001
-
-run_rollback
-assert_link_release "$CMS_ROOT/current" release-001
-assert_link_release "$CMS_ROOT/previous" release-002
+[ ! -e "$CMS_ROOT/previous" ] && [ ! -L "$CMS_ROOT/previous" ] || {
+  echo "Legacy release pointer must not remain after deployment" >&2
+  exit 1
+}
 
 # Reusing an identical release is idempotent.
-run_deploy "$release_one"
-assert_link_release "$CMS_ROOT/current" release-001
+run_deploy "$release_two"
+assert_link_release "$CMS_ROOT/current" release-002
 
 # Corruption must be detected before the current symlink changes.
 release_bad="$(make_release release-bad)"
@@ -253,7 +241,7 @@ if run_deploy "$release_bad" >/dev/null 2>&1; then
   echo "Corrupt release unexpectedly deployed" >&2
   exit 1
 fi
-assert_link_release "$CMS_ROOT/current" release-001
+assert_link_release "$CMS_ROOT/current" release-002
 
 # Required remotes, source-map policy, and same-origin safety are enforced even
 # when an artifact has an internally consistent checksum manifest.
@@ -545,61 +533,27 @@ if run_deploy "$release_pgp_secret" >/dev/null 2>&1; then
   echo "Release containing PGP private key material unexpectedly deployed" >&2
   exit 1
 fi
-assert_link_release "$CMS_ROOT/current" release-001
+assert_link_release "$CMS_ROOT/current" release-002
 
-# A failed served-release check must restore the previous active release.
+# A failed post-activation check must remain on the candidate for diagnosis.
 release_three="$(make_release release-003)"
 if STUB_RELEASE_MISMATCH=1 run_deploy "$release_three" >/dev/null 2>&1; then
   echo "Activation with a mismatched served release unexpectedly succeeded" >&2
   exit 1
 fi
-assert_link_release "$CMS_ROOT/current" release-001
-assert_link_release "$CMS_ROOT/previous" release-002
+assert_link_release "$CMS_ROOT/current" release-003
 
 # Activating static assets is insufficient when their only API dependency is
-# not ready. A failed gateway readiness probe must roll back the release.
+# not ready. The dependency preflight must fail before the release pointer moves.
 release_four="$(make_release release-004)"
 if STUB_GATEWAY_UNREADY=1 run_deploy "$release_four" >/dev/null 2>&1; then
   echo "Activation with an unready gateway unexpectedly succeeded" >&2
   exit 1
 fi
-assert_link_release "$CMS_ROOT/current" release-001
-assert_link_release "$CMS_ROOT/previous" release-002
-
-# Interrupt in the narrow window after the first pointer mutation, before the
-# second. Cleanup must already consider the pointer transaction dirty.
-release_pointer_signal="$(make_release release-pointer-signal)"
-deploy_pointer_marker="${TMP_ROOT}/deploy-pointer-signal-fired"
-if STUB_SIGNAL_AFTER_LINK="$CMS_ROOT/previous" \
-  STUB_SIGNAL_MARKER="$deploy_pointer_marker" \
-  run_deploy "$release_pointer_signal" >/dev/null 2>&1; then
-  echo "Pointer-interrupted deployment unexpectedly succeeded" >&2
-  exit 1
-fi
-[ -f "$deploy_pointer_marker" ] || {
-  echo "Deployment pointer signal test did not reach the first link rotation" >&2
-  exit 1
-}
-assert_link_release "$CMS_ROOT/current" release-001
-assert_link_release "$CMS_ROOT/previous" release-002
-
-rollback_pointer_marker="${TMP_ROOT}/rollback-pointer-signal-fired"
-if STUB_SIGNAL_AFTER_LINK="$CMS_ROOT/previous" \
-  STUB_SIGNAL_MARKER="$rollback_pointer_marker" \
-  run_rollback >/dev/null 2>&1; then
-  echo "Pointer-interrupted rollback unexpectedly succeeded" >&2
-  exit 1
-fi
-[ -f "$rollback_pointer_marker" ] || {
-  echo "Rollback pointer signal test did not reach the first link rotation" >&2
-  exit 1
-}
-assert_link_release "$CMS_ROOT/current" release-001
-assert_link_release "$CMS_ROOT/previous" release-002
+assert_link_release "$CMS_ROOT/current" release-003
 
 # TERM/INT are failure paths too. If the operator or service manager interrupts
-# activation after link rotation, both release pointers must be restored before
-# the deploy lock is released.
+# preflight, the release pointer must remain unchanged.
 release_signal="$(make_release release-signal)"
 deploy_signal_marker="${TMP_ROOT}/deploy-signal-fired"
 if STUB_SIGNAL_DURING_NGINX_TEST=1 \
@@ -612,22 +566,7 @@ fi
   echo "Deployment signal test did not reach nginx activation" >&2
   exit 1
 }
-assert_link_release "$CMS_ROOT/current" release-001
-assert_link_release "$CMS_ROOT/previous" release-002
-
-rollback_signal_marker="${TMP_ROOT}/rollback-signal-fired"
-if STUB_SIGNAL_DURING_NGINX_TEST=1 \
-  STUB_SIGNAL_MARKER="$rollback_signal_marker" \
-  run_rollback >/dev/null 2>&1; then
-  echo "Signal-interrupted rollback unexpectedly succeeded" >&2
-  exit 1
-fi
-[ -f "$rollback_signal_marker" ] || {
-  echo "Rollback signal test did not reach nginx activation" >&2
-  exit 1
-}
-assert_link_release "$CMS_ROOT/current" release-001
-assert_link_release "$CMS_ROOT/previous" release-002
+assert_link_release "$CMS_ROOT/current" release-003
 
 # Runtime verification compares served manifest bytes, not only releaseId.
 if STUB_MANIFEST_MISMATCH=1 \
@@ -638,14 +577,6 @@ if STUB_MANIFEST_MISMATCH=1 \
   echo "Runtime verification accepted a mismatched served manifest" >&2
   exit 1
 fi
-
-# A failed rollback activation must also restore both pointers.
-if STUB_RELEASE_MISMATCH=1 run_rollback >/dev/null 2>&1; then
-  echo "Rollback with a mismatched served release unexpectedly succeeded" >&2
-  exit 1
-fi
-assert_link_release "$CMS_ROOT/current" release-001
-assert_link_release "$CMS_ROOT/previous" release-002
 
 JEEB_CMS_ROOT="$CMS_ROOT" "$SCRIPTS_DIR/verify-current.sh" >/dev/null
 echo "release script tests passed"

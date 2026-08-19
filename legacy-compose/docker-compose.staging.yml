@@ -67,7 +67,7 @@ services:
         order: start-first
         parallelism: 1
         delay: 10s
-        failure_action: rollback
+        failure_action: pause
         monitor: 20s
       resources:
         limits:

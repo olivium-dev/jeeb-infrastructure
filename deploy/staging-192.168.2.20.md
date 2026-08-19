@@ -21,7 +21,7 @@ block approved staging deployments to this host.
 - Update policy: stop-first with fail-closed health gates and bounded CPU,
   memory, and JSON log rotation.
 - Failure policy: pause the failed rollout in place. Do not perform an
-  automatic or manual rollback; correct the fault and dispatch a fresh run from
+  automatic or manual deployment reversion; correct the fault and dispatch a fresh run from
   the corrected immutable commit.
 
 The workflow rejects a target unless both the hostname and `192.168.2.20` are
@@ -134,7 +134,7 @@ masked-call is local-only, and catalog is empty.
 5. Dispatch `jeeb-gateway` last, then verify its readiness endpoint through
    loopback and public HTTPS.
 6. On failure, inspect the Actions run and `docker service logs`; do not bypass
-   the health gate and do not roll back automatically or manually. Leave the
+   the health gate and do not replace it with an older image. Leave the
    rollout paused, correct configuration or code, publish it, and make a fresh
    dispatch so the run uses the corrected immutable commit.
 

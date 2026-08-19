@@ -25,7 +25,6 @@ See the main repository README and `.github/workflows/` for current production w
 | `docker-compose.monitoring.yml` | Monitoring stack (legacy) | Deprecated |
 | `deploy/production-deploy.sh` | Deploy script (legacy) | Deprecated |
 | `deploy/staging-deploy.sh` | Deploy script (legacy) | Deprecated |
-| `deploy/rollback.sh` | Rollback script (legacy) | Deprecated |
 
 ## Local Development Usage
 
@@ -52,7 +51,7 @@ This provides:
 - Consistency across all product lines
 - Better security (no port 22 exposed to internet)
 - Zero-downtime rolling deployments
-- Simpler rollback procedures
+- Explicit pause-on-failure and fix-forward recovery
 
 ## Migration Path
 

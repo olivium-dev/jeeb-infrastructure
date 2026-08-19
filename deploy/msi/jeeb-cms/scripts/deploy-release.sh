@@ -45,38 +45,11 @@ mkdir -p "$RELEASES_DIR"
 acquire_deploy_lock
 
 STAGING_DIR=""
-OLD_TARGET=""
-ORIGINAL_PREVIOUS=""
-LINKS_CHANGED=0
-ACTIVATION_COMMITTED=0
-
-restore_links() {
-  [ "$LINKS_CHANGED" -eq 1 ] || return 0
-  if [ -n "$OLD_TARGET" ]; then
-    atomic_link "$OLD_TARGET" "$CURRENT_LINK"
-    local old_release_id
-    old_release_id="$(release_id_for "$OLD_TARGET")"
-    test_nginx >/dev/null 2>&1 && reload_nginx >/dev/null 2>&1 \
-      && verify_http_release "$old_release_id" >/dev/null 2>&1 || true
-  else
-    [ ! -L "$CURRENT_LINK" ] || unlink "$CURRENT_LINK"
-    test_nginx >/dev/null 2>&1 && reload_nginx >/dev/null 2>&1 || true
-  fi
-  if [ -n "$ORIGINAL_PREVIOUS" ]; then
-    atomic_link "$ORIGINAL_PREVIOUS" "$PREVIOUS_LINK"
-  else
-    [ ! -L "$PREVIOUS_LINK" ] || unlink "$PREVIOUS_LINK"
-  fi
-  LINKS_CHANGED=0
-}
 
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
   set +e
-  if [ "$status" -ne 0 ] && [ "$ACTIVATION_COMMITTED" -eq 0 ]; then
-    restore_links
-  fi
   if [ -n "$STAGING_DIR" ] && [ -d "$STAGING_DIR" ]; then
     case "$STAGING_DIR" in
       "$RELEASES_DIR"/.*.incoming.*)
@@ -119,28 +92,20 @@ else
 fi
 FINAL_DIR="$(canonical_path "$FINAL_DIR")"
 
-if [ -e "$CURRENT_LINK" ] || [ -L "$CURRENT_LINK" ]; then
-  OLD_TARGET="$(resolve_release_link "$CURRENT_LINK")"
+test_nginx || die "nginx configuration preflight failed"
+verify_dependencies || die "runtime dependency preflight failed"
+LEGACY_RELEASE_LINK="${CMS_ROOT}/previous"
+if [ -L "$LEGACY_RELEASE_LINK" ]; then
+  unlink "$LEGACY_RELEASE_LINK"
+elif [ -e "$LEGACY_RELEASE_LINK" ]; then
+  die "refusing to remove non-symlink legacy release pointer: $LEGACY_RELEASE_LINK"
 fi
-if [ -L "$PREVIOUS_LINK" ]; then
-  ORIGINAL_PREVIOUS="$(resolve_release_link "$PREVIOUS_LINK")"
-fi
-
-if [ "$OLD_TARGET" != "$FINAL_DIR" ]; then
-  # Mark the pointer transaction dirty before its first mutation so a signal
-  # during either atomic_link invocation always enters restoration cleanup.
-  LINKS_CHANGED=1
-  if [ -n "$OLD_TARGET" ]; then
-    atomic_link "$OLD_TARGET" "$PREVIOUS_LINK"
-  fi
-  atomic_link "$FINAL_DIR" "$CURRENT_LINK"
-fi
+atomic_link "$FINAL_DIR" "$CURRENT_LINK"
 
 if activate_and_verify "$RELEASE_ID"; then
-  ACTIVATION_COMMITTED=1
   echo "Activated Jeeb CMS release $RELEASE_ID."
   exit 0
 fi
 
-echo "Activation checks failed; restoring the prior release." >&2
+echo "Activation checks failed; the candidate remains active for diagnosis and a corrected forward deployment." >&2
 exit 1

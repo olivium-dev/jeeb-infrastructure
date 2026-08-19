@@ -26,7 +26,7 @@ on:
         type: string
       environment:
         description: 'Target environment'
-        required: true
+        required: false
         default: 'production'
         type: string
       published_port:
@@ -109,18 +109,6 @@ jobs:
           
           echo "✓ Image verified: $IMAGE"
 
-      - name: Capture current image tag for rollback
-        id: capture-current
-        run: |
-          echo "==> Capturing current image tag for rollback safety..."
-          
-          CURRENT_IMAGE=$(ssh jeeb-vps "
-            docker service inspect --format='{{ index .Spec.TaskTemplate.ContainerSpec.Image }}' ${{ inputs.service_name }} 2>/dev/null | awk -F: '{print \$NF}' || echo 'unknown'
-          ")
-          
-          echo "Current image tag: $CURRENT_IMAGE"
-          echo "previous_tag=$CURRENT_IMAGE" >> $GITHUB_OUTPUT
-
       - name: Deploy to Swarm
         run: |
           echo "==> Deploying to Docker Swarm..."
@@ -140,9 +128,7 @@ jobs:
                 --image ${FULL_IMAGE} \\
                 --update-parallelism 1 \\
                 --update-delay 10s \\
-                --update-failure-action rollback \\
-                --rollback-parallelism 1 \\
-                --rollback-delay 10s \\
+                --update-failure-action pause \\
                 ${SERVICE_NAME}
             else
               echo 'Service does not exist!'
@@ -171,8 +157,8 @@ jobs:
             if [ "$STATUS" = "completed" ] || [ "$STATUS" = "no-update" ]; then
               echo "✓ Service is healthy (status: $STATUS)"
               break
-            elif [ "$STATUS" = "paused" ] || [ "$STATUS" = "rollback_started" ]; then
-              echo "✗ Service update failed or rolling back"
+            elif [ "$STATUS" = "paused" ]; then
+              echo "✗ Service update paused on the failed candidate"
               ssh jeeb-vps "docker service ps --no-trunc ${SERVICE_NAME} | head -20"
               exit 1
             fi
@@ -192,10 +178,48 @@ jobs:
 
           REPLICAS=$(ssh jeeb-vps "docker service ls --filter name=${SERVICE_NAME} --format '{{.Replicas}}'")
           echo "Replicas: $REPLICAS"
-          if echo "$REPLICAS" | grep -q "0/"; then
-            echo "✗ No running replicas"
+          DESIRED_REPLICAS=$(ssh jeeb-vps "docker service inspect --format='{{.Spec.Mode.Replicated.Replicas}}' '${SERVICE_NAME}'")
+          [ "$REPLICAS" = "${DESIRED_REPLICAS}/${DESIRED_REPLICAS}" ] || {
+            echo "✗ Service has not converged to its exact replica count"
             exit 1
-          fi
+          }
+
+          FULL_IMAGE="ghcr.io/olivium-dev/${SERVICE_NAME}:${{ inputs.image_tag }}"
+          IMAGE_REPOSITORY="${FULL_IMAGE%:*}"
+          EXPECTED_DIGEST_REF=$(ssh jeeb-vps "docker image inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' '${FULL_IMAGE}'" \
+            | awk -v prefix="${IMAGE_REPOSITORY}@" 'index($0, prefix) == 1 { print; exit }')
+          EXPECTED_IMAGE_ID=$(ssh jeeb-vps "docker image inspect --format='{{.Id}}' '${FULL_IMAGE}'")
+          [ -n "$EXPECTED_DIGEST_REF" ] || { echo "✗ Could not resolve requested image digest"; exit 1; }
+          [ -n "$EXPECTED_IMAGE_ID" ] || { echo "✗ Could not resolve requested image ID"; exit 1; }
+          EXPECTED_SERVICE_IMAGE="${FULL_IMAGE}@${EXPECTED_DIGEST_REF##*@}"
+
+          SERVICE_IMAGE=$(ssh jeeb-vps "docker service inspect --format='{{.Spec.TaskTemplate.ContainerSpec.Image}}' '${SERVICE_NAME}'")
+          case "$SERVICE_IMAGE" in
+            "$EXPECTED_SERVICE_IMAGE") ;;
+            *) echo "✗ Service spec image differs from the requested immutable image"; exit 1 ;;
+          esac
+
+          CONTAINER_EVIDENCE=$(ssh jeeb-vps "docker ps --filter 'label=com.docker.swarm.service.name=${SERVICE_NAME}' --format '{{.ID}}'")
+          CONTAINER_COUNT=$(printf '%s\n' "$CONTAINER_EVIDENCE" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
+          [ "$CONTAINER_COUNT" = "$DESIRED_REPLICAS" ] || {
+            echo "✗ Running container count differs from the desired replica count"
+            exit 1
+          }
+          while IFS= read -r container_id; do
+            [ -n "$container_id" ] || continue
+            task_image=$(ssh jeeb-vps "docker inspect --format='{{.Config.Image}}' '$container_id'")
+            task_image_id=$(ssh jeeb-vps "docker inspect --format='{{.Image}}' '$container_id'")
+            [ "$task_image" = "$EXPECTED_SERVICE_IMAGE" ] || {
+              echo "✗ A running container differs from the requested immutable image"
+              exit 1
+            }
+            [ "$task_image_id" = "$EXPECTED_IMAGE_ID" ] || {
+              echo "✗ A running container differs from the requested image ID"
+              exit 1
+            }
+          done <<< "$CONTAINER_EVIDENCE"
+
+          echo "✓ Service and running containers use the requested immutable image"
 
           echo ""
           echo "Final service status:"
@@ -237,7 +261,7 @@ jobs:
             tail -5 /home/ec2-user/server-jeeb-config/.deploy-history 2>/dev/null || echo '(new deploy history file)'
           "
 
-      - name: Output rollback info
+      - name: Output deployment info
         run: |
           echo ""
           echo "╔════════════════════════════════════════════════════════════════════════════╗"
@@ -246,9 +270,4 @@ jobs:
           echo ""
           echo "Service:        ${{ inputs.service_name }}"
           echo "Image tag:      ${{ inputs.image_tag }}"
-          echo "Previous tag:   ${{ steps.capture-current.outputs.previous_tag }}"
-          echo ""
-          echo "To rollback, run:"
-          echo "  gh workflow run swarm-rollback.yml -R olivium-dev/jeeb-infrastructure \\"
-          echo "    -f service_name=${{ inputs.service_name }} \\"
-          echo "    -f previous_run_id=${{ steps.capture-current.outputs.previous_tag }}"
+          echo "Failure mode:   pause and fix forward"

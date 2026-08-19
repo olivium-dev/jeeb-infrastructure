@@ -83,7 +83,7 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
         run: |
-          chmod +x deploy/production-deploy.sh deploy/production-rollback.sh
+          chmod +x deploy/production-deploy.sh
           ./deploy/production-deploy.sh
 
       - name: Post-deploy smoke

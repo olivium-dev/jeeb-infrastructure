@@ -79,7 +79,7 @@ jobs:
           ssh jeeb-vps "docker service rm ${SVC} 2>/dev/null && sleep 4 || true"
           MOUNT=""
           [ "$FB_NEED" = "true" ] && MOUNT="--mount type=bind,source=/home/ec2-user/firebase-admin.json,target=/firebase-admin.json,readonly"
-          ssh jeeb-vps "docker service create --name ${SVC} --network jeeb-net \
+          ssh jeeb-vps "docker service create --name ${SVC} --network jeeb-net --update-failure-action pause \
             --publish published=${EXT},target=${INT},mode=host --replicas 1 \
             --env-file ~/${SVC}.env $MOUNT --with-registry-auth $IMG"
       - name: Verify

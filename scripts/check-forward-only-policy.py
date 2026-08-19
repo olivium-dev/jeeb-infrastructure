@@ -70,8 +70,8 @@ FORBIDDEN_CONTROLS = (
     "ghcr.io/olivium-dev/service:" + "latest",
     "c" + "p service.backup /srv/service/current",
     "l" + "n -sfn /srv/service/previous /srv/service/current",
-    "docker service " + "\\\n" + "roll" + "back service",
-    'ENGINE=docker; "$ENGINE" service ' + "\\\n" + "r" + "m service",
+    "docker service " + "\\  \n" + "roll" + "back service",
+    'ENGINE=docker; "$ENGINE" service ' + "\\  \n" + "r" + "m service",
 )
 
 BENIGN_CONTROLS = (
@@ -81,12 +81,13 @@ BENIGN_CONTROLS = (
 )
 
 MUTATION_CONTROLS = (
+    "docker service " + "\\  \n" + 'update --image "$IMAGE" app',
     'ENGINE=docker; "$ENGINE" service update --image "$IMAGE" app',
     "docker service create --name app image@sha256:" + "a" * 64,
     "docker service scale app=0",
     "docker stack deploy -c compose.yml app",
     "docker stack " + "r" + "m app",
-    'ENGINE=docker; "$ENGINE" service ' + "\\\n" + 'update --image "$IMAGE" app',
+    'ENGINE=docker; "$ENGINE" service ' + "\\  \n" + 'update --image "$IMAGE" app',
 )
 
 

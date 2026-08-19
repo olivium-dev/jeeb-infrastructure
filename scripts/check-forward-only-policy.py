@@ -83,6 +83,7 @@ MUTATION_CONTROLS = (
     "docker service create --name app image@sha256:" + "a" * 64,
     "docker service scale app=0",
     "docker stack deploy -c compose.yml app",
+    "docker stack " + "r" + "m app",
 )
 
 
@@ -127,7 +128,7 @@ def main() -> int:
         return 1
 
     mutation_command = re.compile(
-        r"\b(?:service\s+(?:create|update|scale)|stack\s+deploy)\b",
+        r"\b(?:service\s+(?:create|update|scale)|stack\s+(?:deploy|r" + r"m))\b",
         re.I,
     )
     for control in MUTATION_CONTROLS:

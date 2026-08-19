@@ -6,7 +6,7 @@ The intended request path is:
 
 `MSI operator LAN -> port 80 nginx -> static CMS or 127.0.0.1:10090 gateway`
 
-The native HTTP listener is intentionally reachable on the trusted MSI operator LAN and its CSP does not upgrade same-origin assets to HTTPS. DNS, a Cloudflare tunnel, TLS termination, and an Access policy remain external prerequisites before any public exposure; these files do not create or modify them.
+The native HTTP listener is intentionally reachable on the trusted MSI operator LAN and its CSP does not upgrade same-origin assets to HTTPS. Public staging access is provided at `cms.jeeb.fds-1.com` through the authenticated `.20` nginx origin and Cloudflare Tunnel. The public shell is reachable so operators can sign in; gateway authentication, capability checks, strict same-origin/CSRF checks, and blocked callback paths form the application boundary. Cloudflare Access is optional defense in depth, not a prerequisite for this public login surface.
 
 ## Release artifact contract
 
@@ -115,7 +115,7 @@ sudo /opt/jeeb-cms/tools/deploy-release.sh \
 
 Deployment requires and checks the externally supplied manifest digest, validates the source and copied artifact, makes the release root-owned and read-only, and runs nginx plus gateway dependency preflight before changing `/opt/jeeb-cms/current`. It then atomically activates the candidate, reloads nginx, and verifies `/healthz`, the complete served `release.json`, and the served `SHA256SUMS` digest. A post-activation failure leaves the candidate active for diagnosis and requires a corrected forward deployment.
 
-The gateway's forwarded-header defaults trust the immediate loopback proxy; nginx supplies the original HTTPS scheme and public host, which keeps strict origin validation and `__Host-` refresh/CSRF cookies same-origin. Evidence responses remain under `/gateway/admin/v1/deliveries/.../evidence/<opaque-token>`; nginx streams them without buffering, hides upstream cache policy, and applies `no-store` without rewriting cookie paths or domains.
+The staging gateway trusts only the exact private Swarm overlay selected by its deployment workflow; nginx supplies the original HTTPS scheme and public host, which keeps strict origin validation and `__Host-` refresh/CSRF cookies same-origin. Evidence responses remain under `/gateway/admin/v1/deliveries/.../evidence/<opaque-token>`; nginx streams them without buffering, hides upstream cache policy, and applies `no-store` without rewriting cookie paths or domains.
 
 ## Verification
 
@@ -126,7 +126,7 @@ curl -fsS http://127.0.0.1/release.json
 curl -fsS http://127.0.0.1/gateway/health/ready
 ```
 
-Before operator access, additionally verify private TLS/Access, deep links, strict missing-remote 404 behavior, CSP/cache headers, release hashes, and successful Playwright journeys through the private domain.
+Before operator access, additionally verify public TLS through the tunnel, exact-origin session handling, deep links, strict missing-remote 404 behavior, CSP/cache headers, release hashes, and successful Playwright journeys through `cms.jeeb.fds-1.com`.
 
 ## Repository tests
 

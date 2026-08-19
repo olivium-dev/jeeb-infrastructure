@@ -1,0 +1,13 @@
+name = "jeeb-staging-host-router"
+main = "jeeb-staging-router.mjs"
+compatibility_date = "2026-08-19"
+account_id = "58198ae51392a2cc2d391867fb65da7e"
+workers_dev = false
+
+[[routes]]
+pattern = "app.jeeb.fds-1.com"
+custom_domain = true
+
+[[routes]]
+pattern = "cms.jeeb.fds-1.com"
+custom_domain = true

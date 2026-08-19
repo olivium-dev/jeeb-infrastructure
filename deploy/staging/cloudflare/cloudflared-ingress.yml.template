@@ -1,0 +1,18 @@
+tunnel: f029ab58-b82d-4bf3-906a-508ffe4c5661
+credentials-file: /etc/cloudflared-jeeb-staging/f029ab58-b82d-4bf3-906a-508ffe4c5661.json
+metrics: 127.0.0.1:20242
+
+ingress:
+  - hostname: jeeb-app-origin.fds-1.com
+    service: https://127.0.0.1:443
+    originRequest:
+      originServerName: app.jeeb.fds-1.com
+      httpHostHeader: app.jeeb.fds-1.com
+  - hostname: jeeb-cms-origin.fds-1.com
+    service: https://127.0.0.1:443
+    originRequest:
+      originServerName: cms.jeeb.fds-1.com
+      httpHostHeader: cms.jeeb.fds-1.com
+  - hostname: jeeb-staging-ssh.fds-1.com
+    service: ssh://127.0.0.1:22
+  - service: http_status:404

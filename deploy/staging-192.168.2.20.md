@@ -10,7 +10,8 @@ block approved staging deployments to this host.
 ## Deployment contract
 
 - Target: `olivium-ephemerals` at `192.168.2.20`.
-- Public application hostname: `jeeb-staging.fds-1.com`.
+- Public gateway hostname: `app.jeeb.fds-1.com`.
+- Public CMS hostname: `cms.jeeb.fds-1.com`.
 - GitHub Actions SSH hostname: `jeeb-staging-ssh.fds-1.com`.
 - Workflow name in every active repository: `jeeb-staging-deploy`.
 - Trigger: manual `workflow_dispatch` on the repository default branch.
@@ -33,18 +34,69 @@ deployments.
 ## Cloudflare and ingress
 
 The locally managed tunnel `jeeb-staging-192-168-2-20` is run by the enabled
-systemd unit `cloudflared-jeeb-staging.service`.
+systemd unit `cloudflared-jeeb-staging.service`. It follows the same tunnel
+pattern as the other working servers; no router port forwarding is required.
 
-- HTTP and HTTPS route `jeeb-staging.fds-1.com` to the server's nginx ingress.
-- TCP/SSH routes `jeeb-staging-ssh.fds-1.com` to the server SSH daemon.
-- `https://jeeb-staging.fds-1.com/__tunnel_health` is the ingress smoke check.
+- Worker `jeeb-staging-host-router` owns the exact Custom Domains
+  `app.jeeb.fds-1.com` and `cms.jeeb.fds-1.com` and injects a runtime origin key.
+- The Worker maps those names to the proxied tunnel-only hostnames
+  `jeeb-app-origin.fds-1.com` and `jeeb-cms-origin.fds-1.com` respectively.
+- `cloudflared` forwards both hidden hostnames to nginx TLS on loopback, using
+  the corresponding public hostname for certificate and HTTP Host validation.
+- TCP/SSH remains at `jeeb-staging-ssh.fds-1.com` and routes to the server SSH
+  daemon.
+- The superseded web hostname `jeeb-staging.fds-1.com` has no DNS record or
+  tunnel ingress. It may remain as an opaque JWT issuer value until token
+  consumers are migrated in a separately coordinated identity change.
 - `/home/ec2-user/.cloudflared/cert.pem` and the tunnel credential file are
   server-owned Cloudflare material and must never be copied into a repository.
 
-The gateway is published on host port `10000`. nginx is the only public HTTP
-entry point; microservice host ports remain staging-LAN services. A callback
-relay on `10090` is restricted by UFW to the local Docker gateway subnet and
-forwards the exact case callback paths to the gateway's loopback listener.
+Cloudflare automatically manages the public edge certificates for both Worker
+Custom Domains. Their DNS validation TXT records must remain in the zone for
+renewal. nginx terminates a separate Let's Encrypt ECDSA certificate named
+`jeeb-staging-edge`, containing both public names. It is issued through DNS-01
+with a zone-scoped Cloudflare token stored only in the root-readable file
+`/etc/letsencrypt/jeeb-secrets/cloudflare.ini`. The enabled certbot timer renews
+it, and `/etc/letsencrypt/renewal-hooks/deploy/jeeb-nginx` validates the nginx
+configuration before reload.
+
+nginx listens for HTTPS only on `127.0.0.1` and `::1`, and rejects requests
+that do not carry the Worker's origin key. The matching key exists only as a
+Worker secret and in root-owned `/etc/nginx/jeeb-origin-key.map`; it must never
+be committed. The gateway is published on host port `10000` behind the app
+virtual host. The CMS virtual host proxies the LAN-only MSI origin at
+`192.168.2.39`, while its private callback paths fail closed. Microservice host
+ports remain staging-LAN services. A callback relay on `10090` is restricted by
+UFW to the local Docker gateway subnet and forwards the exact case callback
+paths to the gateway's loopback listener.
+
+Install repository-owned origin files deterministically; provision the two
+runtime secrets separately before validation:
+
+```bash
+sudo install -o root -g root -m 0644 deploy/staging/nginx/jeeb-direct-tls.conf \
+  /etc/nginx/sites-available/jeeb-direct-tls.conf
+sudo ln -sfn /etc/nginx/sites-available/jeeb-direct-tls.conf \
+  /etc/nginx/sites-enabled/jeeb-direct-tls.conf
+sudo install -o root -g root -m 0600 \
+  deploy/staging/cloudflare/cloudflared-ingress.yml.template \
+  /etc/cloudflared-jeeb-staging/config.yml
+sudo install -o root -g root -m 0755 \
+  deploy/staging/letsencrypt/renewal-hooks/deploy/jeeb-nginx \
+  /etc/letsencrypt/renewal-hooks/deploy/jeeb-nginx
+sudo cloudflared --config /etc/cloudflared-jeeb-staging/config.yml \
+  tunnel ingress validate
+sudo nginx -t
+sudo systemctl restart cloudflared-jeeb-staging nginx
+```
+
+The gateway staging workflow derives the exact `docker_gwbridge` gateway used
+by the host-mode published port and configures only that single address as a
+trusted forwarded-header proxy; it does not trust the bridge or application
+overlay ranges. It also allowlists only `https://app.jeeb.fds-1.com` and
+`https://cms.jeeb.fds-1.com` for admin session origins. The public app and CMS
+session probes must reach `csrf_rejected` when deliberately sent without a CSRF
+token; `origin_rejected` indicates a broken proxy contract.
 
 ## GitHub secrets
 
@@ -120,12 +172,13 @@ masked-call is local-only, and catalog is empty.
 - PostgreSQL, MongoDB, and Redis listen on their intended private interfaces;
   UFW allows their ports only from the local Docker gateway subnet.
 - `/opt/jeeb-staging-cdn/uploads` exists with deployment-user/Docker ownership.
-- nginx, the staging Cloudflare service, and the pre-existing Nextcloud AIO
-  stack remain enabled and healthy.
+- nginx, the staging Cloudflare service, the certbot timer, and the pre-existing
+  Nextcloud AIO stack remain enabled and healthy.
 
 ## Operating procedure
 
-1. Confirm the Cloudflare systemd unit and the public tunnel health endpoint.
+1. Confirm the Cloudflare systemd unit, nginx, certbot timer, and the public
+   tunnel health endpoint.
 2. Confirm Cloudflare SSH reaches hostname `olivium-ephemerals` and that the
    target has `192.168.2.20`.
 3. Dispatch `jeeb-staging-deploy` for dependency services first.
@@ -141,7 +194,9 @@ masked-call is local-only, and catalog is empty.
 Useful non-secret checks:
 
 ```bash
-curl -fsS https://jeeb-staging.fds-1.com/__tunnel_health
+curl -fsS https://app.jeeb.fds-1.com/__tunnel_health
+curl -fsS https://app.jeeb.fds-1.com/health/ready
+curl -fsS https://cms.jeeb.fds-1.com/healthz
 cloudflared access ssh --hostname jeeb-staging-ssh.fds-1.com
 gh workflow run jeeb-staging-deploy.yml -R olivium-dev/SERVICE_REPOSITORY
 docker service ls --format '{{.Name}} {{.Replicas}}' | sort

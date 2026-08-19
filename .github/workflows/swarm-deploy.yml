@@ -26,7 +26,7 @@ on:
         type: string
       environment:
         description: 'Target environment'
-        required: true
+        required: false
         default: 'production'
         type: string
       published_port:

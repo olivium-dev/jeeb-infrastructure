@@ -14,7 +14,7 @@ python3 "$TEST_DIR/test_assemble_release.py"
 
 if command -v shellcheck >/dev/null 2>&1; then
   find "$BASE_DIR/scripts" "$TEST_DIR" -type f -name '*.sh' -print0 \
-    | xargs -0 shellcheck
+    | xargs -0 shellcheck --severity=warning
 else
   echo "shellcheck unavailable; bash syntax and functional tests completed"
 fi

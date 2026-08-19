@@ -17,10 +17,10 @@ jobs:
         env: { PG_PW: "${{ secrets.JEEB_PG_PASSWORD }}" }
         run: |
           ssh jeeb-vps "docker network create --driver overlay --attachable jeeb-net 2>/dev/null && echo net-created || echo net-exists"
-          ssh jeeb-vps "docker service ls --format '{{.Name}}' | grep -qx jeeb-postgres || docker service create --detach --name jeeb-postgres --network jeeb-net \
+          ssh jeeb-vps "docker service ls --format '{{.Name}}' | grep -qx jeeb-postgres || docker service create --detach --name jeeb-postgres --network jeeb-net --update-failure-action pause \
             --env POSTGRES_USER=jeeb --env POSTGRES_PASSWORD='$PG_PW' --env POSTGRES_DB=postgres \
             --mount type=volume,source=jeeb-pgdata,target=/var/lib/postgresql/data --replicas 1 postgis/postgis:16-3.4"
-          ssh jeeb-vps "docker service ls --format '{{.Name}}' | grep -qx jeeb-redis || docker service create --detach --name jeeb-redis --network jeeb-net \
+          ssh jeeb-vps "docker service ls --format '{{.Name}}' | grep -qx jeeb-redis || docker service create --detach --name jeeb-redis --network jeeb-net --update-failure-action pause \
             --mount type=volume,source=jeeb-redisdata,target=/data --replicas 1 redis:7-alpine"
       - name: Mongo (AVX-aware, detached, clean redeploy)
         env: { MONGO_PW: "${{ secrets.JEEB_MONGO_PASSWORD }}" }
@@ -29,7 +29,7 @@ jobs:
           AVX=$(ssh jeeb-vps "grep -m1 -oc avx /proc/cpuinfo 2>/dev/null || echo 0")
           if echo "$AVX" | grep -qE '^[1-9]'; then IMG=mongo:7; else IMG=mongo:4.4; fi
           echo "AVX support=$AVX -> using $IMG"
-          ssh jeeb-vps "docker service create --detach --name jeeb-mongo --network jeeb-net \
+          ssh jeeb-vps "docker service create --detach --name jeeb-mongo --network jeeb-net --update-failure-action pause \
             --env MONGO_INITDB_ROOT_USERNAME=jeeb --env MONGO_INITDB_ROOT_PASSWORD='$MONGO_PW' \
             --mount type=volume,source=jeeb-mongodata2,target=/data/db --replicas 1 $IMG"
       - name: Converge check (bounded, non-blocking)

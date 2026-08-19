@@ -78,7 +78,7 @@ install -m 0644 nginx/backoffice.jeeb.fds-1.com.conf \
   /etc/nginx/sites-available/backoffice.jeeb.fds-1.com.conf
 ln -s /etc/nginx/sites-available/backoffice.jeeb.fds-1.com.conf \
   /etc/nginx/sites-enabled/backoffice.jeeb.fds-1.com.conf
-# Preserve its target as a rollback pointer, then disable the distro landing page.
+# Disable the distro landing page after the Jeeb site is installed.
 test ! -L /etc/nginx/sites-enabled/default || unlink /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable --now nginx
@@ -103,7 +103,7 @@ systemctl restart jeeb-cms-release.service
 
 Keep port 80 limited to the trusted MSI operator LAN. From step 3 onward the nginx systemd drop-in requires the validation unit, so a missing or invalid active release prevents native nginx from starting at boot.
 
-## Deploy and rollback
+## Deploy
 
 Copy a complete immutable artifact to a staging location on MSI. Compare the SHA-256 of its `SHA256SUMS` file with the digest published by the trusted build job, then pin that digest during deployment:
 
@@ -113,18 +113,9 @@ sudo /opt/jeeb-cms/tools/deploy-release.sh \
   /path/to/artifact
 ```
 
-Deployment requires and checks the externally supplied manifest digest, validates the source, copies it to a same-filesystem incoming directory, validates the copy, makes the release root-owned and read-only, moves it to `/opt/jeeb-cms/releases/<releaseId>`, and atomically switches `/opt/jeeb-cms/current`. It then tests and reloads nginx and verifies `/healthz`, `/gateway/health/ready` (fails closed while the gateway is down; override with `JEEB_CMS_GATEWAY_READY_URL`), the complete served `release.json`, and the served `SHA256SUMS` digest. Any failure restores the prior `current` and `previous` symlinks.
+Deployment requires and checks the externally supplied manifest digest, validates the source and copied artifact, makes the release root-owned and read-only, and runs nginx plus gateway dependency preflight before changing `/opt/jeeb-cms/current`. It then atomically activates the candidate, reloads nginx, and verifies `/healthz`, the complete served `release.json`, and the served `SHA256SUMS` digest. A post-activation failure leaves the candidate active for diagnosis and requires a corrected forward deployment.
 
 The gateway's forwarded-header defaults trust the immediate loopback proxy; nginx supplies the original HTTPS scheme and public host, which keeps strict origin validation and `__Host-` refresh/CSRF cookies same-origin. Evidence responses remain under `/gateway/admin/v1/deliveries/.../evidence/<opaque-token>`; nginx streams them without buffering, hides upstream cache policy, and applies `no-store` without rewriting cookie paths or domains.
-
-Rollback to the recorded previous release or an explicit retained release:
-
-```bash
-sudo /opt/jeeb-cms/tools/rollback-release.sh
-sudo /opt/jeeb-cms/tools/rollback-release.sh <release-id>
-```
-
-Rollback never edits release contents or domain data. It validates the target and uses the same nginx and served-release gates as deployment.
 
 ## Verification
 

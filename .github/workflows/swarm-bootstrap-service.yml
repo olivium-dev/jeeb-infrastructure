@@ -117,9 +117,7 @@ jobs:
               --mode replicated \\
               --update-parallelism 1 \\
               --update-delay 10s \\
-              --update-failure-action rollback \\
-              --rollback-parallelism 1 \\
-              --rollback-delay 10s \\
+              --update-failure-action pause \\
               --restart-condition on-failure \\
               --restart-delay 5s \\
               --restart-max-attempts 3 \\
@@ -187,5 +185,5 @@ jobs:
           echo ""
           echo "Next steps:"
           echo "  - Future updates: use swarm-deploy.yml"
-          echo "  - Rollback: use swarm-rollback.yml"
+          echo "  - Failed updates remain paused for diagnosis and a corrected deployment"
           echo "  - Add nginx location block for /${{ inputs.service_name }}/"

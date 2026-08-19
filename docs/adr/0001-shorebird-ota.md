@@ -17,7 +17,7 @@ directly to installed apps within minutes, with:
 1. Pushes targeting staging devices before reaching production users.
 2. A startup version check so users on a stale patch are prompted to
    update.
-3. A rollback path for a bad patch.
+3. A fix-forward path for a bad patch.
 
 Native (Kotlin / Swift) changes, new permissions, and new plugins **must
 still go through the App Store / Play** — that is non-negotiable and a
@@ -38,9 +38,8 @@ Adopt **Shorebird Code Push** as the OTA mechanism for `jeeb-mobile`.
 - Startup version check is implemented in the Flutter bootstrap using
   the `shorebird_code_push` Dart package and gated by a feature flag so
   it can be disabled per-flavor.
-- Rollback is "cut a forward patch from the last-good ref against the
-  same release version" — Shorebird channels always serve the latest
-  patch for a release, so a forward patch is the canonical undo.
+- Recovery is a corrected patch from the current branch against the same
+  release version. Shorebird channels always serve the latest patch.
 
 ## Alternatives considered
 
@@ -78,9 +77,8 @@ Adopt **Shorebird Code Push** as the OTA mechanism for `jeeb-mobile`.
   store review.
 - Channels map cleanly onto Flutter flavors (`staging`/`beta`/`production`)
   and onto the existing `mobile-release` GitHub Environment.
-- Rollback is a forward patch from a prior commit — a procedure we
-  already do for backend releases (`production-rollback.sh`), so the
-  team mental model carries over.
+- Failure recovery uses a newly reviewed patch from the current branch, matching
+  the backend fix-forward policy.
 
 ### Negative / trade-offs
 
@@ -103,7 +101,7 @@ Adopt **Shorebird Code Push** as the OTA mechanism for `jeeb-mobile`.
 ### Operational
 
 - New runbook: `deploy/mobile-ota-runbook.md`.
-- New scripts: `scripts/shorebird-patch.sh`, `scripts/shorebird-rollback.sh`.
+- New script: `scripts/shorebird-patch.sh`.
 - New workflow: `jeeb-mobile/.github/workflows/mobile-ota-shorebird.yml`.
 - Existing `deploy/mobile-release-runbook.md` cross-references the OTA
   runbook in a new §8 "OTA hotfix path".
@@ -113,6 +111,6 @@ Adopt **Shorebird Code Push** as the OTA mechanism for `jeeb-mobile`.
 ## Verification
 
 The runbook ships with a dry-run mode (`SHOREBIRD_DRY_RUN=true`) used by
-both scripts and a non-destructive workflow_dispatch input. CI invokes
+the patch script and a non-destructive workflow_dispatch input. CI invokes
 the dry-run on every PR that touches `lib/` so the patch toolchain is
 exercised continuously.

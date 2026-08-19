@@ -109,18 +109,6 @@ jobs:
           
           echo "✓ Image verified: $IMAGE"
 
-      - name: Capture current image tag for rollback
-        id: capture-current
-        run: |
-          echo "==> Capturing current image tag for rollback safety..."
-          
-          CURRENT_IMAGE=$(ssh jeeb-vps "
-            docker service inspect --format='{{ index .Spec.TaskTemplate.ContainerSpec.Image }}' ${{ inputs.service_name }} 2>/dev/null | awk -F: '{print \$NF}' || echo 'unknown'
-          ")
-          
-          echo "Current image tag: $CURRENT_IMAGE"
-          echo "previous_tag=$CURRENT_IMAGE" >> $GITHUB_OUTPUT
-
       - name: Deploy to Swarm
         run: |
           echo "==> Deploying to Docker Swarm..."
@@ -140,9 +128,7 @@ jobs:
                 --image ${FULL_IMAGE} \\
                 --update-parallelism 1 \\
                 --update-delay 10s \\
-                --update-failure-action rollback \\
-                --rollback-parallelism 1 \\
-                --rollback-delay 10s \\
+                --update-failure-action pause \\
                 ${SERVICE_NAME}
             else
               echo 'Service does not exist!'
@@ -171,8 +157,8 @@ jobs:
             if [ "$STATUS" = "completed" ] || [ "$STATUS" = "no-update" ]; then
               echo "✓ Service is healthy (status: $STATUS)"
               break
-            elif [ "$STATUS" = "paused" ] || [ "$STATUS" = "rollback_started" ]; then
-              echo "✗ Service update failed or rolling back"
+            elif [ "$STATUS" = "paused" ]; then
+              echo "✗ Service update paused on the failed candidate"
               ssh jeeb-vps "docker service ps --no-trunc ${SERVICE_NAME} | head -20"
               exit 1
             fi
@@ -196,6 +182,27 @@ jobs:
             echo "✗ No running replicas"
             exit 1
           fi
+
+          FULL_IMAGE="ghcr.io/olivium-dev/${SERVICE_NAME}:${{ inputs.image_tag }}"
+          EXPECTED_DIGEST=$(ssh jeeb-vps "docker image inspect --format='{{index .RepoDigests 0}}' '${FULL_IMAGE}'" | awk -F@ '{print $2}')
+          [ -n "$EXPECTED_DIGEST" ] || { echo "✗ Could not resolve requested image digest"; exit 1; }
+
+          SERVICE_IMAGE=$(ssh jeeb-vps "docker service inspect --format='{{.Spec.TaskTemplate.ContainerSpec.Image}}' '${SERVICE_NAME}'")
+          case "$SERVICE_IMAGE" in
+            "${FULL_IMAGE}@${EXPECTED_DIGEST}") ;;
+            *) echo "✗ Service spec image differs from the requested immutable image"; exit 1 ;;
+          esac
+
+          TASK_IMAGES=$(ssh jeeb-vps "docker service ps --filter desired-state=running --format '{{.ID}}' '${SERVICE_NAME}' | xargs -r docker inspect --format '{{.Spec.ContainerSpec.Image}}'")
+          [ -n "$TASK_IMAGES" ] || { echo "✗ No running task image could be inspected"; exit 1; }
+          while IFS= read -r task_image; do
+            [ "$task_image" = "${FULL_IMAGE}@${EXPECTED_DIGEST}" ] || {
+              echo "✗ A running task differs from the requested immutable image"
+              exit 1
+            }
+          done <<< "$TASK_IMAGES"
+
+          echo "✓ Service and running tasks use the requested immutable image"
 
           echo ""
           echo "Final service status:"
@@ -237,7 +244,7 @@ jobs:
             tail -5 /home/ec2-user/server-jeeb-config/.deploy-history 2>/dev/null || echo '(new deploy history file)'
           "
 
-      - name: Output rollback info
+      - name: Output deployment info
         run: |
           echo ""
           echo "╔════════════════════════════════════════════════════════════════════════════╗"
@@ -246,9 +253,4 @@ jobs:
           echo ""
           echo "Service:        ${{ inputs.service_name }}"
           echo "Image tag:      ${{ inputs.image_tag }}"
-          echo "Previous tag:   ${{ steps.capture-current.outputs.previous_tag }}"
-          echo ""
-          echo "To rollback, run:"
-          echo "  gh workflow run swarm-rollback.yml -R olivium-dev/jeeb-infrastructure \\"
-          echo "    -f service_name=${{ inputs.service_name }} \\"
-          echo "    -f previous_run_id=${{ steps.capture-current.outputs.previous_tag }}"
+          echo "Failure mode:   pause and fix forward"

@@ -91,33 +91,20 @@ The startup version check is implemented in
 On staging it surfaces a non-dismissable prompt; on production it
 auto-applies on next cold start.
 
-## 6. Rollback
+## 6. Failed patch response
 
-There is **no "delete patch"** in Shorebird — clients that already
-pulled a bad patch keep it until they pull the next one. Roll back by
-publishing a **forward patch** built from the last-good git ref.
+Shorebird clients that pulled a bad patch keep it until a newer patch arrives.
+Correct the defect on the current branch, run the normal validation suite, and
+publish the corrected patch with `scripts/shorebird-patch.sh`. Do not build the
+recovery artifact from an older git ref.
 
-```bash
-./jeeb-infrastructure/scripts/shorebird-rollback.sh \
-    android production 1.4.0+12345 v1.4.0
-```
-
-The script:
-1. Saves the current branch/HEAD.
-2. Checks out `v1.4.0`.
-3. Calls `shorebird-patch.sh` (re-running the native-change check).
-4. Restores the original HEAD on exit via `trap`.
-
-SLO: rollback patch published within **5 min**; existing clients pull on
-next foreground/cold start.
-
-When to escalate to a full store release instead of OTA rollback:
+Escalate to a full store release when:
 - The bad patch added a permission prompt the user already declined.
 - The bad patch corrupted persisted state (`shared_preferences`,
   `flutter_secure_storage`). OTA cannot un-write user storage; ship a
   full release with a migration.
 - The Shorebird console is unreachable for > 10 min — cut a
-  store-track hotfix per [`mobile-release-runbook.md` §6](./mobile-release-runbook.md#6-rollback).
+  store-track fix per [`mobile-release-runbook.md` §6](./mobile-release-runbook.md#6-failed-release-response).
 
 ## 7. Common failures
 
@@ -174,5 +161,5 @@ Tracked under `T-mobile-OTA-001` (filed at handoff).
 | P2       | Bad patch reached `beta` or `production` track                | PagerDuty: mobile-on-call (ack ≤ 15 min)     |
 | P1       | Patch causes app to crash on launch on > 1% of installs       | PagerDuty: mobile-on-call + incident-commander |
 
-For P1: open an incident bridge, run `shorebird-rollback.sh`, and start
-a blameless retro per `incident-retro-blameless`.
+For P1: open an incident bridge, halt further distribution, prepare a corrected
+release, and start a blameless retro per `incident-retro-blameless`.

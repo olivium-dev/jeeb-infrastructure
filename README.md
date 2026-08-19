@@ -78,7 +78,6 @@ curl http://localhost:5000/health/live
 | `verify-server.yml` | Schedule daily + manual | Diagnostic: Swarm, nginx, SSL, cloudflared status |
 | `swarm-deploy.yml` | `workflow_call` | **Reusable** — deploy/update microservice images |
 | `swarm-bootstrap-service.yml` | Manual | One-time service creation (first deploy) |
-| `swarm-rollback.yml` | Manual | Rollback to previous image tag |
 
 ### Service Deploy Workflows (jeeb-gateway, etc.)
 
@@ -114,8 +113,7 @@ jeeb-infrastructure/
 │       ├── update-ssl-certificate.yml # Certbot renewal
 │       ├── verify-server.yml       # Diagnostic checks
 │       ├── swarm-deploy.yml        # Reusable: microservice deploy
-│       ├── swarm-bootstrap-service.yml # One-time service create
-│       └── swarm-rollback.yml      # Rollback helper
+│       └── swarm-bootstrap-service.yml # One-time service create
 ├── legacy-compose/                 # PREVIOUS: Docker Compose + Traefik
 │   ├── docker-compose*.yml         # (Local dev only — not production)
 │   ├── deploy/*.sh                 # (Old deploy scripts)
@@ -271,16 +269,10 @@ gh workflow run deploy-production.yml -R olivium-dev/jeeb-gateway \
 
 Requires approval via GitHub `production` environment.
 
-## Rollback
+## Failed deployments
 
-If a deploy fails the health check, it auto-rolls back. For manual rollback:
-
-```bash
-gh workflow run swarm-rollback.yml -R olivium-dev/jeeb-infrastructure \
-  -f service_name=jeeb-gateway \
-  -f previous_run_id=<previous-run-id> \
-  -f confirm=ROLLBACK
-```
+Swarm updates use `failure_action: pause`. A failed candidate remains visible
+for diagnosis; fix the fault, build a new immutable image, and deploy that image.
 
 ## Monitoring & Observability
 

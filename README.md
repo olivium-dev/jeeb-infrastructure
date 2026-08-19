@@ -72,20 +72,18 @@ curl http://localhost:5000/health/live
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `deploy-nginx.yml` | Push to `nginx/**` | Deploy nginx config with backup + test + verify |
+| `deploy-nginx.yml` | Push to `nginx/**` | Validate, apply, and verify nginx config |
 | `deploy-static-pages.yml` | Push to `static-pages/**` | Deploy static HTML/assets |
 | `update-ssl-certificate.yml` | Schedule 2× daily | Renew Let's Encrypt certs via DNS-01 |
 | `verify-server.yml` | Schedule daily + manual | Diagnostic: Swarm, nginx, SSL, cloudflared status |
-| `swarm-deploy.yml` | `workflow_call` | **Reusable** — deploy/update microservice images |
-| `swarm-bootstrap-service.yml` | Manual | One-time service creation (first deploy) |
+| `no-deployment-reversion.yml` | PR + push to `main` | Enforce repository-wide forward-only policy |
 
 ### Service Deploy Workflows (jeeb-gateway, etc.)
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `build.yml` | Push to `main` | Build, test, push image to GHCR |
-| `deploy-staging.yml` | After build success | Auto-deploy to staging |
-| `deploy-production.yml` | Manual + approval | Deploy to production |
+| `build.yml` | Push to `main` | Build, test, and publish an immutable image |
+| `deploy-to-jeeb.yml` | Manual | Deploy the build-produced digest and verify the exact runtime |
 
 ## File Structure
 
@@ -112,8 +110,7 @@ jeeb-infrastructure/
 │       ├── deploy-static-pages.yml # Static assets deploy
 │       ├── update-ssl-certificate.yml # Certbot renewal
 │       ├── verify-server.yml       # Diagnostic checks
-│       ├── swarm-deploy.yml        # Reusable: microservice deploy
-│       └── swarm-bootstrap-service.yml # One-time service create
+│       └── no-deployment-reversion.yml # Forward-only policy gate
 ├── legacy-compose/                 # PREVIOUS: Docker Compose + Traefik
 │   ├── docker-compose*.yml         # (Local dev only — not production)
 │   ├── deploy/*.sh                 # (Old deploy scripts)
@@ -240,34 +237,15 @@ rm -f jeeb-deploy-key jeeb-deploy-key.pub
 
 ## Deploy a Microservice
 
-### First Time (Bootstrap the Service)
+Application deployment authority lives only in each canonical service
+repository. Its workflow must build the image, consume that build step's
+repository digest, update-or-create the service with pause-on-failure, and
+verify the exact service, task, container, and image identities. This
+infrastructure repository deliberately carries no generic Swarm mutation
+workflow and does not accept caller-provided image tags.
 
-```bash
-# GitHub CLI
-gh workflow run swarm-bootstrap-service.yml -R olivium-dev/jeeb-infrastructure \
-  -f service_name=jeeb-gateway \
-  -f published_port=10000 \
-  -f target_port=8080 \
-  -f replicas=2
-```
-
-### Subsequent Deploys (Automatic via jeeb-gateway)
-
-Push to `jeeb-gateway/main`:
-1. `build.yml` builds, tests, pushes `ghcr.io/olivium-dev/jeeb-gateway:<run_id>`
-2. `deploy-staging.yml` calls reusable `swarm-deploy.yml` → VPS
-3. `docker service update --image …:<run_id>` performs rolling update
-4. Health check verifies `/health/live` returns 200
-
-### Manual Production Deploy
-
-```bash
-gh workflow run deploy-production.yml -R olivium-dev/jeeb-gateway \
-  -f image_tag=<run_id> \
-  -f confirm_production=PRODUCTION
-```
-
-Requires approval via GitHub `production` environment.
+Datastores are pre-provisioned runtime dependencies. Application deployment
+workflows verify those dependencies but do not recreate or replace them.
 
 ## Failed deployments
 
@@ -302,7 +280,7 @@ If you have a previous Traefik-based deployment:
 1. **Keep the VPS** — the bootstrap script is idempotent and can upgrade in-place
 2. **Drain the old compose stack**: `docker compose -f legacy-compose/docker-compose.production.yml down`
 3. **Run bootstrap** to ensure nginx, cloudflared, Swarm are configured
-4. **Bootstrap services** via `swarm-bootstrap-service.yml`
+4. **Deploy services** via each canonical service repository's exact-digest workflow
 5. **Update nginx** via `deploy-nginx.yml` to add the location blocks
 6. **Delete old compose** once verified working
 

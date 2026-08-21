@@ -7,6 +7,15 @@ reactivated on 2026-08-18, superseding its previous decommissioned status.
 Historical retirement evidence remains historical; it must not be used to
 block approved staging deployments to this host.
 
+The environment was last fully validated on 2026-08-19 after datastore
+isolation, fleet deployment, public ingress validation, and a staging-only
+user-data cleanup. The public Super Login Plus roster intentionally contains
+only Nour and Karim. CMS administrator authentication is a separate control;
+there is no corresponding `Admin` row in the user-management database.
+
+The detailed data-operation record and verification evidence are in
+[`docs/staging-data-baseline-2026-08-19.md`](../docs/staging-data-baseline-2026-08-19.md).
+
 ## Deployment contract
 
 - Target: `olivium-ephemerals` at `192.168.2.20`.
@@ -170,6 +179,32 @@ cutover, every PostgreSQL and MongoDB source was captured to a timestamped,
 host-owned dump and restored into the corresponding staging target. Future
 schema or seed changes must target only the owning staging datastore.
 
+### Current staging data baseline
+
+As of the 2026-08-19 cleanup:
+
+- `jeeb-user-management_staging` contains exactly two application users: Nour
+  (`d1000000-0000-4000-8000-000000000001`) and Karim
+  (`d1000000-0000-4000-8000-000000000002`).
+- The separate CMS administrator authentication and CMS configuration were
+  preserved. Do not create a synthetic user-management `Admin` row to
+  represent that administrator.
+- All staging PostgreSQL references to the 361 deleted user IDs were scanned;
+  zero residual references remained.
+- MongoDB notification documents are retained only when their receiver or
+  target is Nour or Karim.
+- Firestore database `staging` had zero top-level collections, and the staging
+  CDN upload path had zero files.
+- Redis databases 1 through 6 are staging-owned. They were cleared during the
+  cleanup; Redis database 0 is the separate dev store and was not modified.
+- The unsuffixed dev user-management database remained at 363 users.
+
+The verified safety snapshot is stored on the staging host at
+`/home/ec2-user/jeeb-staging-user-purge/20260819T152107Z`. It contains 18
+PostgreSQL custom-format dumps, the staging MongoDB archive, the deleted-ID
+manifest, and a 20-entry SHA-256 manifest. This is a recovery artifact for the
+destructive data operation, not a deployment-reversion mechanism.
+
 ## Active service inventory
 
 | Repository | Swarm service suffix | Host port | Health gate |
@@ -244,6 +279,20 @@ cloudflared access ssh --hostname jeeb-staging-ssh.fds-1.com
 gh workflow run jeeb-staging-deploy.yml -R olivium-dev/SERVICE_REPOSITORY
 docker service ls --format '{{.Name}} {{.Replicas}}' | sort
 ```
+
+Expected post-cleanup results:
+
+- `https://app.jeeb.fds-1.com/health/ready` reports `Healthy` with all 18
+  readiness checks healthy.
+- All 24 active `jeeb-staging-*` Swarm services report `1/1`; the intentionally
+  disabled `jeeb-staging-notification-candidate` reports `0/0`.
+- `https://cms.jeeb.fds-1.com/` returns HTTP 200.
+- `GET /api/User/super-login/users` returns exactly Nour and Karim.
+- A token minted for either retained user with explicit `customer` and
+  `driver` roles can call `GET /v1/users/me` successfully.
+
+The protected gateway root may return HTTP 401 by design. Use `/health/ready`,
+not `/`, as the unauthenticated gateway health probe.
 
 Rotate any legacy shared SSH password found in local historical notes and
 remove the plaintext copies after access through the dedicated Actions key has

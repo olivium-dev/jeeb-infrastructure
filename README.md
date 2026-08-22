@@ -45,13 +45,14 @@ The authoritative active-staging contract is
 [`deploy/staging-192.168.2.20.md`](deploy/staging-192.168.2.20.md). It identifies
 `192.168.2.20` (`olivium-ephemerals`) as the live staging host; older VPS
 bootstrap examples below are historical setup guidance, not the active staging
-target.
+target. The current isolated-data baseline and 2026-08-19 cleanup record are in
+[`docs/staging-data-baseline-2026-08-19.md`](docs/staging-data-baseline-2026-08-19.md).
 
-| Env        | Deployment Method                              | TLS               | URL                     |
-| ---------- | ---------------------------------------------- | ----------------- | ----------------------- |
-| local      | `docker compose` (legacy-compose/)             | none              | http://localhost:5000   |
-| staging    | GitHub Actions → Swarm (auto on push)          | Let's Encrypt     | https://jeeb.fds-1.com  |
-| production | GitHub Actions → Swarm (manual + approval)     | Let's Encrypt     | https://jeeb.fds-1.com  |
+| Env        | Deployment Method                              | TLS                         | URL |
+| ---------- | ---------------------------------------------- | --------------------------- | --- |
+| local      | `docker compose` (legacy-compose/)             | none                        | http://localhost:5000 |
+| staging    | GitHub Actions manual dispatch → Swarm on `.20` | Cloudflare edge + nginx LE | https://app.jeeb.fds-1.com and https://cms.jeeb.fds-1.com |
+| production | GitHub Actions → Swarm (manual + approval)     | Let's Encrypt               | https://jeeb.fds-1.com |
 
 ## Quick Start — Local Development
 

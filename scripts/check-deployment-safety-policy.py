@@ -32,6 +32,9 @@ AUTOMATIC_EDGE_RECOVERY_COMMAND = re.compile(
 )
 EXECUTABLE_SUFFIXES = {".sh", ".yml", ".yaml"}
 OWNER_BLOCK_JOB = "owner-forward-only-block"
+DEFAULT_GATE_JOB = "default-branch-gate"
+APPROVED_EDGE_JOBS = {DEFAULT_GATE_JOB, OWNER_BLOCK_JOB, "deploy"}
+DEFAULT_GATE_STEP = "Refuse non-default-branch dispatch"
 OWNER_BLOCK_STEP = "OWNER BLOCK — edge mutations are disabled"
 OWNER_BLOCK_MARKER = "OWNER BLOCK: automatic rollback/recovery has been removed."
 DIRECT_BLOCK_MARKER = "OWNER BLOCK: forward-only edge promotion is pending approval"
@@ -46,6 +49,14 @@ DIRECT_BLOCK_COMMANDS = (
     "echo '::error::OWNER BLOCK: forward-only edge promotion is pending approval; "
     "no origin mutation was attempted.' >&2",
     "exit 78",
+)
+DEFAULT_GATE_COMMANDS = (
+    "set -euo pipefail",
+    '[ "$GITHUB_REF_TYPE" = branch ]',
+    '[ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ] || {',
+    "echo '::error::Staging edge deploys are allowed only from the default branch.'",
+    "exit 1",
+    "}",
 )
 
 
@@ -206,11 +217,15 @@ def literal_run_script(step_lines: list[str]) -> str | None:
     return None
 
 
-def blocked_shell_result(source: str) -> subprocess.CompletedProcess[str]:
+def blocked_shell_result(
+    source: str, variables: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    environment = {"PATH": ""}
+    environment.update(variables or {})
     return subprocess.run(
         ["/bin/bash", "-c", source],
         cwd=ROOT,
-        env={"PATH": ""},
+        env=environment,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -230,12 +245,62 @@ def shell_command_lines(source: str) -> list[str]:
 def edge_workflow_findings(source: str) -> list[str]:
     findings: list[str] = []
     jobs = workflow_jobs(source)
+    actual_jobs = set(jobs)
+    if actual_jobs != APPROVED_EDGE_JOBS:
+        findings.append(
+            "staging edge workflow job inventory must be exactly "
+            f"{sorted(APPROVED_EDGE_JOBS)!r}; got {sorted(actual_jobs)!r}"
+        )
+    default_gate = jobs.get(DEFAULT_GATE_JOB)
     owner = jobs.get(OWNER_BLOCK_JOB)
     deploy = jobs.get("deploy")
+    if default_gate is None:
+        return [f"staging edge workflow is missing structural job {DEFAULT_GATE_JOB!r}"]
     if owner is None:
         return [f"staging edge workflow is missing structural job {OWNER_BLOCK_JOB!r}"]
     if deploy is None:
         return ["staging edge workflow is missing structural job 'deploy'"]
+
+    default_properties = direct_properties(default_gate, 4)
+    expected_default_properties = {"runs-on": ["ubuntu-22.04"], "steps": [""]}
+    if default_properties != expected_default_properties:
+        findings.append("default-branch-gate job properties are not canonical")
+    default_steps = workflow_steps(default_gate)
+    if len(default_steps) != 1:
+        findings.append("default-branch-gate must contain exactly one branch-check step")
+    else:
+        default_step = default_steps[0]
+        default_step_properties = step_properties(default_step)
+        expected_step_properties = {
+            "name": [DEFAULT_GATE_STEP],
+            "env": [""],
+            "run": ["|"],
+        }
+        if default_step_properties != expected_step_properties:
+            findings.append("default-branch-gate step properties are not canonical")
+        default_environment = direct_properties(default_step, 10)
+        if default_environment != {
+            "DEFAULT_BRANCH": ["${{ github.event.repository.default_branch }}"]
+        }:
+            findings.append("default-branch-gate environment is not canonical")
+        default_script = literal_run_script(default_step)
+        if default_script is None:
+            findings.append("default-branch-gate must contain a literal run script")
+        else:
+            if tuple(shell_command_lines(default_script)) != DEFAULT_GATE_COMMANDS:
+                findings.append("default-branch-gate run script is not canonical")
+            result = blocked_shell_result(
+                default_script,
+                {
+                    "GITHUB_REF_TYPE": "branch",
+                    "GITHUB_REF_NAME": "main",
+                    "DEFAULT_BRANCH": "main",
+                },
+            )
+            if result.returncode != 0:
+                findings.append(
+                    "default-branch-gate must pass its exact branch check under empty PATH"
+                )
 
     for job_name, job_lines in ((OWNER_BLOCK_JOB, owner), ("deploy", deploy)):
         properties = direct_properties(job_lines, 4)

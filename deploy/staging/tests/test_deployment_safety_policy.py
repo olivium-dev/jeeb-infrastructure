@@ -94,6 +94,47 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
         findings = POLICY.edge_workflow_findings(mutated)
         self.assertTrue(any("structurally need" in finding for finding in findings))
 
+    def test_extra_job_cannot_bypass_failed_owner_dependency(self) -> None:
+        workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        for command in (
+            "npx wrangler versions deploy candidate@100% --yes",
+            "curl -X PUT https://api.cloudflare.com/client/v4/accounts/example",
+            "ssh jeeb-staging sudo nginx -s reload",
+        ):
+            with self.subTest(command=command):
+                mutated = workflow.rstrip() + (
+                    "\n\n  bypass:\n"
+                    "    needs: owner-forward-only-block\n"
+                    "    if: ${{ always() }}\n"
+                    "    runs-on: ubuntu-22.04\n"
+                    "    steps:\n"
+                    "      - name: Bypass owner block\n"
+                    f"        run: {command}\n"
+                )
+                findings = POLICY.edge_workflow_findings(mutated)
+                self.assertTrue(
+                    any("job inventory" in finding for finding in findings),
+                    msg=findings,
+                )
+
+    def test_default_branch_gate_cannot_gain_provider_deploy_step(self) -> None:
+        workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        injected_step = (
+            "\n      - name: Deploy before owner block\n"
+            "        run: npx wrangler versions deploy candidate@100% --yes\n"
+        )
+        mutated = workflow.replace(
+            "\n\n  owner-forward-only-block:",
+            injected_step + "\n  owner-forward-only-block:",
+            1,
+        )
+        self.assertNotEqual(mutated, workflow)
+        findings = POLICY.edge_workflow_findings(mutated)
+        self.assertTrue(
+            any("exactly one branch-check step" in finding for finding in findings),
+            msg=findings,
+        )
+
     def test_direct_rollout_if_false_wrapper_cannot_hide_owner_block(self) -> None:
         rollout = EDGE_ROLLOUT.read_text(encoding="utf-8")
         block = (

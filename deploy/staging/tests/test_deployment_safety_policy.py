@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = ROOT / "scripts" / "check-deployment-safety-policy.py"
 SAFETY_WORKFLOW = ROOT / ".github" / "workflows" / "deployment-safety.yml"
 EDGE_WORKFLOW = ROOT / ".github" / "workflows" / "jeeb-staging-edge-deploy.yml"
+EDGE_ROLLOUT = ROOT / "deploy" / "staging" / "scripts" / "edge-origin-rollout.sh"
 
 SPEC = importlib.util.spec_from_file_location("deployment_safety_policy", POLICY_PATH)
 if SPEC is None or SPEC.loader is None:
@@ -40,23 +41,74 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
         self.assertIn("branches: [main]", workflow)
         self.assertIsNone(re.search(r"(?m)^\s+paths(?:-ignore)?:", workflow))
 
-    def test_owner_block_precedes_and_is_required_by_deploy(self) -> None:
+    def test_owner_block_is_structural_and_required_by_deploy(self) -> None:
         workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
-        block_start = workflow.index("  owner-forward-only-block:")
-        deploy_start = workflow.index("  deploy:")
-        block_job = workflow[block_start:deploy_start]
-        self.assertLess(block_start, deploy_start)
-        self.assertIn("OWNER BLOCK — edge mutations are disabled", block_job)
-        self.assertIn("exit 78", block_job)
-        self.assertIn("needs: owner-forward-only-block", workflow[deploy_start:])
-        for forbidden in ("uses:", "secrets.", "curl ", "ssh ", "npx ", "wrangler"):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, block_job)
+        self.assertEqual(POLICY.edge_workflow_findings(workflow), [])
 
     def test_edge_workflow_has_no_failure_mutation_handler(self) -> None:
         workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
-        self.assertNotIn("if: ${{ failure()", workflow)
-        self.assertNotIn("if: failure()", workflow)
+        jobs = POLICY.workflow_jobs(workflow)
+        deploy = jobs["deploy"]
+        for step in POLICY.workflow_steps(deploy):
+            properties = POLICY.step_properties(step)
+            self.assertNotIn("continue-on-error", properties)
+            self.assertNotIn("if", properties)
+
+    def test_deploy_job_always_condition_cannot_bypass_owner_block(self) -> None:
+        workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        mutated = workflow.replace(
+            "  deploy:\n    needs: owner-forward-only-block\n",
+            "  deploy:\n    if: ${{ always() }}\n    needs: owner-forward-only-block\n",
+            1,
+        )
+        self.assertNotEqual(mutated, workflow)
+        self.assertTrue(POLICY.edge_workflow_findings(mutated))
+
+    def test_all_job_level_status_and_continue_bypasses_are_rejected(self) -> None:
+        workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        for property_line in (
+            "if: ${{ always() }}",
+            "if: ${{ failure() }}",
+            "if: ${{ cancelled() }}",
+            "continue-on-error: true",
+        ):
+            with self.subTest(property_line=property_line):
+                mutated = workflow.replace(
+                    "  deploy:\n    needs: owner-forward-only-block\n",
+                    f"  deploy:\n    {property_line}\n"
+                    "    needs: owner-forward-only-block\n",
+                    1,
+                )
+                self.assertNotEqual(mutated, workflow)
+                self.assertTrue(POLICY.edge_workflow_findings(mutated))
+
+    def test_commented_owner_need_cannot_hide_real_deploy_dependency(self) -> None:
+        workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        mutated = workflow.replace(
+            "  deploy:\n    needs: owner-forward-only-block\n",
+            "  deploy:\n    # needs: owner-forward-only-block\n"
+            "    needs: default-branch-gate\n",
+            1,
+        )
+        self.assertNotEqual(mutated, workflow)
+        findings = POLICY.edge_workflow_findings(mutated)
+        self.assertTrue(any("structurally need" in finding for finding in findings))
+
+    def test_direct_rollout_if_false_wrapper_cannot_hide_owner_block(self) -> None:
+        rollout = EDGE_ROLLOUT.read_text(encoding="utf-8")
+        block = (
+            "echo '::error::OWNER BLOCK: forward-only edge promotion is pending "
+            "approval; no origin mutation was attempted.' >&2\n"
+            "exit 78"
+        )
+        wrapped = "if false; then\n  " + block.replace("\n", "\n  ") + "\nfi"
+        mutated = rollout.replace(block, wrapped, 1)
+        self.assertNotEqual(mutated, rollout)
+        self.assertTrue(POLICY.direct_rollout_block_findings(mutated))
+
+    def test_direct_rollout_exits_78_without_path_or_arguments(self) -> None:
+        rollout = EDGE_ROLLOUT.read_text(encoding="utf-8")
+        self.assertEqual(POLICY.direct_rollout_block_findings(rollout), [])
 
     def test_mutation_outside_former_path_filter_is_rejected(self) -> None:
         path = Path("ops/new-release-authority.yml")

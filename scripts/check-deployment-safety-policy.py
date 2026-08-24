@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import textwrap
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -30,6 +31,22 @@ AUTOMATIC_EDGE_RECOVERY_COMMAND = re.compile(
     re.I | re.M,
 )
 EXECUTABLE_SUFFIXES = {".sh", ".yml", ".yaml"}
+OWNER_BLOCK_JOB = "owner-forward-only-block"
+OWNER_BLOCK_STEP = "OWNER BLOCK — edge mutations are disabled"
+OWNER_BLOCK_MARKER = "OWNER BLOCK: automatic rollback/recovery has been removed."
+DIRECT_BLOCK_MARKER = "OWNER BLOCK: forward-only edge promotion is pending approval"
+OWNER_BLOCK_COMMANDS = (
+    "echo '::error::OWNER BLOCK: automatic rollback/recovery has been removed.'",
+    "echo '::error::No Cloudflare, Worker, SSH, nginx, origin, or provider action is permitted.'",
+    "echo '::error::Approve a forward-only failure policy before enabling this deployment.'",
+    "exit 78",
+)
+DIRECT_BLOCK_COMMANDS = (
+    "set -euo pipefail",
+    "echo '::error::OWNER BLOCK: forward-only edge promotion is pending approval; "
+    "no origin mutation was attempted.' >&2",
+    "exit 78",
+)
 
 
 def normalized_shell_source(source: str) -> str:
@@ -56,6 +73,227 @@ def tracked_utf8():
 
 def require(source: str, needles: tuple[str, ...], label: str) -> list[str]:
     return [f"{label} is missing {needle!r}" for needle in needles if needle not in source]
+
+
+def uncomment_yaml_scalar(value: str) -> str:
+    """Remove an unquoted YAML comment from the small workflow subset we audit."""
+    quote: str | None = None
+    escaped = False
+    for index, character in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\" and quote == '"':
+            escaped = True
+            continue
+        if character in ("'", '"'):
+            if quote is None:
+                quote = character
+            elif quote == character:
+                quote = None
+            continue
+        if character == "#" and quote is None and (
+            index == 0 or value[index - 1].isspace()
+        ):
+            return value[:index].rstrip()
+    return value.rstrip()
+
+
+def yaml_code(line: str) -> str:
+    if line.lstrip().startswith("#"):
+        return ""
+    return uncomment_yaml_scalar(line)
+
+
+def indentation(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def workflow_jobs(source: str) -> dict[str, list[str]]:
+    lines = source.splitlines()
+    try:
+        jobs_start = next(
+            index for index, line in enumerate(lines) if yaml_code(line) == "jobs:"
+        )
+    except StopIteration:
+        return {}
+
+    jobs: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines[jobs_start + 1 :]:
+        code = yaml_code(line)
+        if code and indentation(code) == 0:
+            break
+        match = re.fullmatch(r"  ([A-Za-z0-9_-]+)\s*:", code)
+        if match:
+            current = match.group(1)
+            jobs[current] = []
+            continue
+        if current is not None:
+            jobs[current].append(line)
+    return jobs
+
+
+def direct_properties(lines: list[str], indent: int) -> dict[str, list[str]]:
+    properties: dict[str, list[str]] = {}
+    for line in lines:
+        code = yaml_code(line)
+        if not code or indentation(code) != indent:
+            continue
+        pattern = (
+            rf"^\s{{{indent}}}(?:\"([A-Za-z0-9_-]+)\"|"
+            rf"'([A-Za-z0-9_-]+)'|([A-Za-z0-9_-]+))\s*:(?:\s*(.*))?$"
+        )
+        match = re.match(pattern, code)
+        if match:
+            key = match.group(1) or match.group(2) or match.group(3)
+            properties.setdefault(key, []).append((match.group(4) or "").strip())
+    return properties
+
+
+def workflow_steps(job_lines: list[str]) -> list[list[str]]:
+    steps_start = next(
+        (
+            index
+            for index, line in enumerate(job_lines)
+            if yaml_code(line) == "    steps:"
+        ),
+        None,
+    )
+    if steps_start is None:
+        return []
+
+    steps: list[list[str]] = []
+    current: list[str] | None = None
+    for line in job_lines[steps_start + 1 :]:
+        code = yaml_code(line)
+        if code and indentation(code) <= 4:
+            break
+        if code and indentation(code) == 6 and code.lstrip().startswith("- "):
+            current = [line]
+            steps.append(current)
+            continue
+        if current is not None:
+            current.append(line)
+    return steps
+
+
+def step_properties(step_lines: list[str]) -> dict[str, list[str]]:
+    normalized: list[str] = []
+    for index, line in enumerate(step_lines):
+        code = yaml_code(line)
+        if index == 0 and code and indentation(code) == 6:
+            normalized.append("        " + code.lstrip()[2:])
+        else:
+            normalized.append(line)
+    return direct_properties(normalized, 8)
+
+
+def literal_run_script(step_lines: list[str]) -> str | None:
+    for index, line in enumerate(step_lines):
+        code = yaml_code(line)
+        effective = code
+        if index == 0 and code and indentation(code) == 6:
+            effective = "        " + code.lstrip()[2:]
+        if not re.fullmatch(r"        run:\s*\|[-+]?", effective):
+            continue
+        content: list[str] = []
+        for candidate in step_lines[index + 1 :]:
+            if candidate.strip() and indentation(candidate) <= 8:
+                break
+            content.append(candidate)
+        return textwrap.dedent("\n".join(content)) + "\n"
+    return None
+
+
+def blocked_shell_result(source: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["/bin/bash", "-c", source],
+        cwd=ROOT,
+        env={"PATH": ""},
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=3,
+        check=False,
+    )
+
+
+def shell_command_lines(source: str) -> list[str]:
+    return [
+        line.strip()
+        for line in source.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def edge_workflow_findings(source: str) -> list[str]:
+    findings: list[str] = []
+    jobs = workflow_jobs(source)
+    owner = jobs.get(OWNER_BLOCK_JOB)
+    deploy = jobs.get("deploy")
+    if owner is None:
+        return [f"staging edge workflow is missing structural job {OWNER_BLOCK_JOB!r}"]
+    if deploy is None:
+        return ["staging edge workflow is missing structural job 'deploy'"]
+
+    for job_name, job_lines in ((OWNER_BLOCK_JOB, owner), ("deploy", deploy)):
+        properties = direct_properties(job_lines, 4)
+        if "continue-on-error" in properties:
+            findings.append(f"{job_name} must not set job-level continue-on-error")
+        if "if" in properties:
+            findings.append(f"{job_name} must not set any job-level if condition")
+
+    deploy_needs = direct_properties(deploy, 4).get("needs", [])
+    if deploy_needs != [OWNER_BLOCK_JOB]:
+        findings.append(
+            f"deploy must structurally need only {OWNER_BLOCK_JOB!r}; got {deploy_needs!r}"
+        )
+
+    owner_steps = workflow_steps(owner)
+    if len(owner_steps) != 1:
+        findings.append("owner block job must contain exactly one step")
+        return findings
+    owner_step = owner_steps[0]
+    owner_properties = step_properties(owner_step)
+    if owner_properties.get("name") != [OWNER_BLOCK_STEP]:
+        findings.append("owner block step name is missing or structurally changed")
+    if "if" in owner_properties or "continue-on-error" in owner_properties:
+        findings.append("owner block step must be unconditional and fail-closed")
+    block_script = literal_run_script(owner_step)
+    if block_script is None:
+        findings.append("owner block step must contain a literal run script")
+    else:
+        if tuple(shell_command_lines(block_script)) != OWNER_BLOCK_COMMANDS:
+            findings.append("owner block run script contains an unexpected command")
+        result = blocked_shell_result(block_script)
+        output = result.stdout + result.stderr
+        if result.returncode != 78 or OWNER_BLOCK_MARKER not in output:
+            findings.append(
+                "owner block script must emit its marker and exit exactly 78 under empty PATH"
+            )
+
+    for step in workflow_steps(deploy):
+        properties = step_properties(step)
+        if "continue-on-error" in properties:
+            findings.append("deploy steps must not set continue-on-error")
+        if "if" in properties:
+            findings.append("deploy steps must not set conditional execution")
+    return findings
+
+
+def direct_rollout_block_findings(source: str) -> list[str]:
+    findings: list[str] = []
+    commands = shell_command_lines(source)
+    if tuple(commands[: len(DIRECT_BLOCK_COMMANDS)]) != DIRECT_BLOCK_COMMANDS:
+        findings.append("origin rollout owner block is not the first executable prefix")
+    result = blocked_shell_result(source)
+    output = result.stdout + result.stderr
+    if result.returncode != 78 or DIRECT_BLOCK_MARKER not in output:
+        findings.append(
+            "origin rollout must emit its owner marker and exit exactly 78 under empty PATH"
+        )
+    return findings
 
 
 def executable_mutation_paths(sources: Iterable[tuple[Path, str]]) -> list[Path]:
@@ -94,12 +332,6 @@ def main() -> int:
                 "node-version: '22.18.0'",
                 "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
                 '[ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]',
-                "owner-forward-only-block:",
-                "OWNER BLOCK — edge mutations are disabled",
-                "OWNER BLOCK: automatic rollback/recovery has been removed.",
-                "No Cloudflare, Worker, SSH, nginx, origin, or provider action is permitted.",
-                "exit 78",
-                "needs: owner-forward-only-block",
                 "Capture exact incumbent Worker and domain associations",
                 "versions upload",
                 "WRANGLER_OUTPUT_FILE_PATH",
@@ -118,19 +350,7 @@ def main() -> int:
             "staging edge workflow",
         )
     )
-    block_start = workflow.find("  owner-forward-only-block:")
-    deploy_start = workflow.find("  deploy:")
-    if block_start < 0 or deploy_start < 0 or block_start >= deploy_start:
-        findings.append("owner block must be a separate prerequisite job before deploy")
-    else:
-        block_job = workflow[block_start:deploy_start]
-        for forbidden in ("uses:", "secrets.", "curl ", "ssh ", "npx ", "wrangler"):
-            if forbidden in block_job:
-                findings.append(
-                    f"owner block performs a provider or external action: {forbidden!r}"
-                )
-    if "if: ${{ failure()" in workflow or "if: failure()" in workflow:
-        findings.append("staging edge workflow still has an automatic failure handler")
+    findings.extend(edge_workflow_findings(workflow))
     findings.extend(
         require(
             rollout,
@@ -146,8 +366,6 @@ def main() -> int:
                 "write_status verified",
                 "cmp -s -- \"$state_dir/jeeb-direct-tls.conf\" \"$config\"",
                 "The snapshot is retained for audit only.",
-                "OWNER BLOCK: forward-only edge promotion is pending approval",
-                "exit 78",
                 "systemctl reload nginx",
                 "apply)",
                 "finalize)",
@@ -155,13 +373,7 @@ def main() -> int:
             "staging origin rollout",
         )
     )
-    script_block = rollout.find("OWNER BLOCK: forward-only edge promotion")
-    script_stop = rollout.find("exit 78", script_block)
-    first_host_access = rollout.find("hostname -s")
-    if not (0 <= script_block < script_stop < first_host_access):
-        findings.append(
-            "origin rollout must stop loudly before argument, host, tool, or mutation access"
-        )
+    findings.extend(direct_rollout_block_findings(rollout))
     findings.extend(
         require(
             wss_probe,

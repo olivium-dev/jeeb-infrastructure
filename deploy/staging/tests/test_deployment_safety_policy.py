@@ -14,6 +14,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = ROOT / "scripts" / "check-deployment-safety-policy.py"
 SAFETY_WORKFLOW = ROOT / ".github" / "workflows" / "deployment-safety.yml"
+EDGE_WORKFLOW = ROOT / ".github" / "workflows" / "jeeb-staging-edge-deploy.yml"
 
 SPEC = importlib.util.spec_from_file_location("deployment_safety_policy", POLICY_PATH)
 if SPEC is None or SPEC.loader is None:
@@ -39,6 +40,24 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
         self.assertIn("branches: [main]", workflow)
         self.assertIsNone(re.search(r"(?m)^\s+paths(?:-ignore)?:", workflow))
 
+    def test_owner_block_precedes_and_is_required_by_deploy(self) -> None:
+        workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        block_start = workflow.index("  owner-forward-only-block:")
+        deploy_start = workflow.index("  deploy:")
+        block_job = workflow[block_start:deploy_start]
+        self.assertLess(block_start, deploy_start)
+        self.assertIn("OWNER BLOCK — edge mutations are disabled", block_job)
+        self.assertIn("exit 78", block_job)
+        self.assertIn("needs: owner-forward-only-block", workflow[deploy_start:])
+        for forbidden in ("uses:", "secrets.", "curl ", "ssh ", "npx ", "wrangler"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, block_job)
+
+    def test_edge_workflow_has_no_failure_mutation_handler(self) -> None:
+        workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn("if: ${{ failure()", workflow)
+        self.assertNotIn("if: failure()", workflow)
+
     def test_mutation_outside_former_path_filter_is_rejected(self) -> None:
         path = Path("ops/new-release-authority.yml")
         self.assert_policy_rejects(
@@ -53,12 +72,33 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
             "docker service rollback jeeb_gateway\n",
         )
 
+    def test_worker_rollback_is_rejected(self) -> None:
+        path = Path("ops/edge-recovery.yml")
+        recoveries = POLICY.executable_recovery_paths(
+            [(path, "run: npx wrangler@4.120.0 rollback deadbeef --yes\n")]
+        )
+        self.assertEqual(recoveries, [path])
+
+    def test_origin_restore_function_is_rejected(self) -> None:
+        path = Path("ops/edge-recovery.sh")
+        recoveries = POLICY.executable_recovery_paths(
+            [(path, "restore_origin() { nginx -t; }\n")]
+        )
+        self.assertEqual(recoveries, [path])
+
     def test_read_only_swarm_inspection_is_allowed(self) -> None:
         path = Path("tools/check-service.sh")
         mutations = POLICY.executable_mutation_paths(
             [(path, "docker service ps jeeb_gateway\n")]
         )
         self.assertEqual(mutations, [])
+
+    def test_read_only_worker_inspection_is_allowed(self) -> None:
+        path = Path("ops/check-worker.sh")
+        recoveries = POLICY.executable_recovery_paths(
+            [(path, "npx wrangler@4.120.0 deployments status --json\n")]
+        )
+        self.assertEqual(recoveries, [])
 
 
 if __name__ == "__main__":

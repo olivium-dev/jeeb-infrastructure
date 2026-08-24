@@ -34,9 +34,8 @@ The detailed data-operation record and verification evidence are in
   memory, and JSON log rotation.
 - Failure policy: single-replica host-mode services update stop-first with
   automatic rollback and rollback-order stop-first. Preserve and verify the
-  incumbent digest before mutation. The staging edge separately restores the
-  exact incumbent Worker version and nginx configuration when any public live
-  gate fails.
+  incumbent digest before mutation. The staging edge is separately owner-blocked
+  and performs no Worker, nginx, origin, SSH, or provider action.
 
 The workflow rejects a target unless both the hostname and `192.168.2.20` are
 present. GitHub-hosted runners reach SSH through Cloudflare Access using a
@@ -57,8 +56,8 @@ pattern as the other working servers; no router port forwarding is required.
 - Edge releases use `wrangler versions upload` followed by an exact version-ID
   deployment. Those commands do not mutate Worker triggers. Before any origin
   mutation, the workflow captures the immutable IDs and service/zone bindings
-  for exactly those two Custom Domains; candidate verification and recovery
-  both require the association snapshot to remain byte-for-byte unchanged.
+  for exactly those two Custom Domains; candidate and final verification both
+  require the association snapshot to remain byte-for-byte unchanged.
 - `cloudflared` forwards both hidden hostnames to nginx TLS on loopback, using
   the corresponding public hostname for certificate and HTTP Host validation.
 - TCP/SSH remains at `jeeb-staging-ssh.fds-1.com` and routes to the server SSH
@@ -307,36 +306,29 @@ masked-call is local-only, and catalog is empty.
    dependency.
 5. Dispatch `jeeb-gateway` last, then verify its readiness endpoint through
    loopback and public HTTPS.
-6. On failure, confirm the workflow restored the recorded incumbent digest or
-   edge version, inspect the Actions run and service logs, correct the fault,
-   and dispatch a fresh immutable commit. Never bypass the health gate.
+6. On failure, treat the release as explicitly red, inspect the reported active
+   state and logs, correct the fault in a new immutable commit, and obtain owner
+   approval before another dispatch. Never bypass the health gate.
 
-### Edge rollback and recovery gate
+### Owner-blocked forward-only edge deployment
 
-The edge workflow captures the incumbent Worker version, exact Worker Custom
-Domain associations, nginx bytes, and association-document symlink target
-before mutation. Origin state advances through
-`recording -> prepared -> applied -> verified`; recovery advances through
-`restoring -> restored`. A lost SSH response after apply or finalize is not
-treated as success: rollback accepts all post-recording states and verifies the
-recorded incumbent again.
+The owner has prohibited silent failure through automatic recovery. The manual
+edge workflow therefore stops in a separate prerequisite job with a loud
+`OWNER BLOCK` before checkout, secret access, Cloudflare or Worker calls, SSH,
+nginx/origin apply, or any other provider action. The deployment job cannot run
+while that prerequisite is red.
 
-Any failed candidate, HTTPS, CMS, association, HSTS, authorized-WSS, finalize,
-or exact-cleanup gate triggers both recovery arms independently:
+No automatic Worker or origin rollback, restoration command, failure trap, or
+failure-time cleanup remains. The dormant forward path still captures the exact
+incumbent Worker/Custom Domain state and nginx/association snapshot for audit,
+uses immutable Worker upload and exact-version promotion, serializes origin
+changes with a lock, and performs the real HTTPS, association, CMS, and
+authorized-WSS gates. The snapshot has no executable restore path.
 
-1. Route 100% of Worker traffic back to the captured incumbent version and
-   query Cloudflare until that exact version is active.
-2. Restore the captured nginx file and association symlink atomically, run
-   `nginx -t`, reload nginx, and compare both restored objects to their snapshot.
-3. Require the two Custom Domain associations to equal the pre-mutation
-   snapshot and require public tunnel, gateway readiness, and CMS health to
-   return HTTPS 200.
-
-If either arm or any post-restore assertion fails, the verdict is
-`RED + RESTORATION FAILED`: freeze further edge dispatches and page on-call. If
-all assertions pass, the verdict remains `RED + RESTORED`; fix the defect and
-dispatch a new default-branch commit. There is no database migration or mobile
-binary mutation in this edge release.
+Enabling deployment requires an explicit owner-approved forward-only failure
+policy. Until then, do not remove or bypass the prerequisite block. A future
+failure must remain visible and must be corrected by a newly reviewed immutable
+commit; it must not trigger an automatic provider or origin mutation.
 
 Useful non-secret checks:
 

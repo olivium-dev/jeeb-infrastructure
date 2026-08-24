@@ -118,88 +118,6 @@ verify_candidate_origin() {
   verify_nginx_runtime
 }
 
-restore_origin() {
-  local link_kind previous_target temporary_link temporary_config
-  require_state_identity || return
-  write_status restoring || return
-
-  temporary_config=$config.restore-$run_key
-  install -o root -g root -m 0644 \
-    "$state_dir/jeeb-direct-tls.conf" "$temporary_config" || return
-  mv -f -- "$temporary_config" "$config" || return
-
-  IFS= read -r link_kind < "$state_dir/previous-current-kind" || return
-  case "$link_kind" in
-    symlink)
-      IFS= read -r previous_target \
-        < "$state_dir/previous-current-target" || return
-      temporary_link=$static_root/.current-restore-$run_key
-      rm -f -- "$temporary_link" || return
-      ln -s -- "$previous_target" "$temporary_link" || return
-      mv -Tf -- "$temporary_link" "$current_link" || return
-      ;;
-    absent)
-      if [ -e "$current_link" ] && [ ! -L "$current_link" ]; then
-        echo 'Refusing to remove a non-symlink association current path.' >&2
-        return 42
-      fi
-      rm -f -- "$current_link" || return
-      ;;
-    *)
-      echo 'The recorded incumbent association-link state is invalid.' >&2
-      return 43
-      ;;
-  esac
-
-  nginx -t || return
-  systemctl reload nginx || return
-  systemctl is-active --quiet nginx || return
-  verify_incumbent_origin || return
-  write_status restored || return
-}
-
-restore_after_apply_error() {
-  local exit_code=$? restore_exit=0
-  trap - ERR
-  restore_origin || restore_exit=$?
-  if [ "$restore_exit" -ne 0 ]; then
-    echo 'Automatic origin restoration failed; freeze edge deploys and page the operator.' >&2
-  fi
-  exit "$exit_code"
-}
-
-rollback_origin() {
-  local status
-  if [ ! -e "$state_dir" ]; then
-    verify_nginx_runtime || return
-    printf '%s\n' 'origin_state=untouched' || return
-    return 0
-  fi
-
-  require_state_identity || return
-  status=$(read_status) || return
-  case "$status" in
-    recording)
-      # Mutation begins only after the state becomes prepared. The snapshot
-      # is published atomically before staging continues, so recording proves
-      # the exact incumbent is still active and fully comparable.
-      verify_incumbent_origin || return
-      write_status restored || return
-      ;;
-    prepared|applied|verified|restoring)
-      restore_origin || return
-      ;;
-    restored)
-      verify_incumbent_origin || return
-      ;;
-    *)
-      echo "Unsupported rollout recovery state: $status" >&2
-      return 44
-      ;;
-  esac
-  printf '%s\n' 'origin_state=restored-and-verified' || return
-}
-
 case "$mode" in
   apply)
     stage_dir=$(resolve_stage_dir)
@@ -257,6 +175,8 @@ case "$mode" in
     fi
     chmod 0600 "$capture_dir/commit-sha" "$capture_dir/status"
     mv -- "$capture_dir" "$state_dir"
+    # The snapshot is retained for audit only. No automatic command can apply it.
+    verify_incumbent_origin
 
     install -d -o root -g root -m 0755 "$static_root/releases"
     [ ! -e "$release_dir" ]
@@ -273,7 +193,6 @@ case "$mode" in
     cmp -s -- "$stage_dir/assetlinks.json" "$release_dir/assetlinks.json"
 
     write_status prepared
-    trap restore_after_apply_error ERR
     install -o root -g root -m 0644 \
       "$stage_dir/jeeb-direct-tls.conf" "$config.candidate-$run_key"
     mv -f -- "$config.candidate-$run_key" "$config"
@@ -284,10 +203,6 @@ case "$mode" in
     systemctl is-active --quiet nginx
     verify_candidate_origin "$stage_dir"
     write_status applied
-    trap - ERR
-    ;;
-  rollback)
-    rollback_origin
     ;;
   finalize)
     stage_dir=$(resolve_stage_dir)

@@ -77,8 +77,8 @@ curl http://localhost:5000/health/live
 | `deploy-static-pages.yml` | Push to `static-pages/**` | Deploy static HTML/assets |
 | `update-ssl-certificate.yml` | Schedule 2× daily | Renew Let's Encrypt certs via DNS-01 |
 | `verify-server.yml` | Schedule daily + manual | Diagnostic: Swarm, nginx, SSL, cloudflared status |
-| `jeeb-staging-edge-deploy.yml` | Manual, default branch only | Deploy and live-gate staging nginx, association files, and Cloudflare Worker with automatic restoration |
-| `deployment-safety.yml` | PR + push to `main` | Enforce strict edge access, health gates, and restoration authority |
+| `jeeb-staging-edge-deploy.yml` | Manual, default branch only | Owner-blocked forward-only edge definition; performs no provider or origin action while blocked |
+| `deployment-safety.yml` | PR + push to `main` | Enforce the owner block, strict edge access, forward-only execution, and health gates |
 
 ### Service Deploy Workflows (jeeb-gateway, etc.)
 
@@ -112,7 +112,7 @@ jeeb-infrastructure/
 │       ├── deploy-static-pages.yml # Static assets deploy
 │       ├── update-ssl-certificate.yml # Certbot renewal
 │       ├── verify-server.yml       # Diagnostic checks
-│       ├── jeeb-staging-edge-deploy.yml # Staging edge deploy + restoration
+│       ├── jeeb-staging-edge-deploy.yml # Owner-blocked forward-only edge definition
 │       └── deployment-safety.yml    # Deployment safety policy gate
 ├── legacy-compose/                 # PREVIOUS: Docker Compose + Traefik
 │   ├── docker-compose*.yml         # (Local dev only — not production)

@@ -33,8 +33,19 @@ jobs:
             exit 1
           }
 
-  deploy:
+  owner-forward-only-block:
     needs: default-branch-gate
+    runs-on: ubuntu-22.04
+    steps:
+      - name: OWNER BLOCK — edge mutations are disabled
+        run: |
+          echo '::error::OWNER BLOCK: automatic rollback/recovery has been removed.'
+          echo '::error::No Cloudflare, Worker, SSH, nginx, origin, or provider action is permitted.'
+          echo '::error::Approve a forward-only failure policy before enabling this deployment.'
+          exit 78
+
+  deploy:
+    needs: owner-forward-only-block
     runs-on: ubuntu-22.04
     environment: staging
     steps:
@@ -433,137 +444,6 @@ jobs:
           target=$(realpath -e -- "$HOME/$candidate")
           [ "$(dirname -- "$target")" = "$root" ]
           [[ "$(basename -- "$target")" =~ ^[0-9]+_[0-9]+$ ]]
-          [ ! -L "$target" ]
-          rm -rf --one-file-system -- "$target"
-          [ ! -e "$target" ]
-          [ ! -L "$target" ]
-          REMOTE
-
-      - name: Restore Worker and origin independently after any failed gate
-        if: ${{ failure() && steps.worker-incumbent.outcome == 'success' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          INCUMBENT_WORKER_VERSION: ${{ steps.worker-incumbent.outputs.version }}
-        run: |
-          set -uo pipefail
-          recovery_failed=0
-
-          active_worker() {
-            local destination=$1
-            npx --yes "wrangler@$WRANGLER_VERSION" deployments status --json \
-              --config "$WRANGLER_CONFIG" > "$destination" || return 1
-            jq -er '
-              (if type == "array" then .[0] else . end) as $deployment
-              | ($deployment.versions
-                  // $deployment.deployment.versions
-                  // $deployment.result.versions
-                  // empty)
-              | map(select((.percentage // 100) == 100))
-              | select(length == 1)
-              | (.[0].version_id // .[0].id)
-            ' "$destination"
-          }
-
-          current=$(active_worker "$RUNNER_TEMP/worker-before-restore.json")
-          if [ "$current" != "$INCUMBENT_WORKER_VERSION" ]; then
-            if ! npx --yes "wrangler@$WRANGLER_VERSION" rollback \
-              "$INCUMBENT_WORKER_VERSION" \
-              --config "$WRANGLER_CONFIG" \
-              --message "automatic restoration after failed git:$GITHUB_SHA" \
-              --yes; then
-              echo '::error::Worker restoration command failed.'
-              recovery_failed=1
-            fi
-          fi
-          restored_worker=$(active_worker "$RUNNER_TEMP/worker-after-restore.json")
-          if [ "$restored_worker" != "$INCUMBENT_WORKER_VERSION" ]; then
-            echo '::error::Worker did not converge to the captured incumbent version.'
-            recovery_failed=1
-          else
-            printf 'worker_restore version=%s status=verified\n' "$restored_worker"
-          fi
-
-          if ssh jeeb-staging sudo bash -s -- \
-            rollback "$EDGE_RUN_KEY" "$GITHUB_SHA" "$REMOTE_STAGE" \
-            < deploy/staging/scripts/edge-origin-rollout.sh; then
-            echo 'origin_restore status=verified'
-          else
-            echo '::error::Origin restoration or exact origin verification failed.'
-            recovery_failed=1
-          fi
-
-          domain_response=$RUNNER_TEMP/restored-worker-domains-response.json
-          domain_snapshot=$RUNNER_TEMP/restored-worker-domains.json
-          if curl -fsS --connect-timeout 5 --max-time 15 \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            -G "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
-            --data-urlencode "service=$WORKER_NAME" \
-            --data-urlencode 'zone_name=fds-1.com' \
-            -o "$domain_response" \
-            && jq -e '.success == true' "$domain_response" >/dev/null \
-            && jq -S '
-              [.result[] | {
-                id,
-                hostname,
-                service,
-                zone_id,
-                zone_name,
-                environment: (.environment // "")
-              }] | sort_by(.hostname)
-            ' "$domain_response" > "$domain_snapshot" \
-            && cmp "$RUNNER_TEMP/incumbent-worker-domains.json" "$domain_snapshot"; then
-            echo 'worker_domain_restore status=unchanged'
-          else
-            echo '::error::Worker domain associations drifted from the incumbent snapshot.'
-            recovery_failed=1
-          fi
-
-          for probe in \
-            https://app.jeeb.fds-1.com/__tunnel_health \
-            https://app.jeeb.fds-1.com/health/ready \
-            https://cms.jeeb.fds-1.com/healthz; do
-            result=$(curl -sS --proto '=https' --tlsv1.2 \
-              --connect-timeout 5 --max-time 10 \
-              -o /dev/null -w '%{http_code} %{time_total}' "$probe")
-            read -r status elapsed <<< "$result"
-            if [ "$status" != 200 ]; then
-              echo "::error::Post-restore public probe failed: $probe -> $status"
-              recovery_failed=1
-            else
-              printf 'post_restore_probe=%s status=%s response_seconds=%s\n' \
-                "$probe" "$status" "$elapsed"
-            fi
-          done
-
-          if [ "$recovery_failed" -ne 0 ]; then
-            echo '::error::RED + RESTORATION FAILED: freeze edge deploys and page on-call.'
-          else
-            echo '::error::RED + RESTORED: all captured incumbent state was verified.'
-          fi
-          exit 1
-
-      - name: Clean exact remote candidate after a failed run
-        if: ${{ failure() }}
-        run: |
-          set -euo pipefail
-          ssh jeeb-staging bash -s -- "$REMOTE_STAGE" <<'REMOTE'
-          set -euo pipefail
-          candidate=$1
-          [[ "$candidate" =~ ^\.jeeb-edge-deploy/([0-9]+)_([0-9]+)$ ]]
-          root_path=$HOME/.jeeb-edge-deploy
-          if [ ! -e "$root_path" ] && [ ! -L "$root_path" ]; then
-            exit 0
-          fi
-          [ -d "$root_path" ]
-          [ ! -L "$root_path" ]
-          root=$(realpath -e -- "$root_path")
-          target=$(realpath -m -- "$HOME/$candidate")
-          [ "$(dirname -- "$target")" = "$root" ]
-          [[ "$(basename -- "$target")" =~ ^[0-9]+_[0-9]+$ ]]
-          if [ ! -e "$target" ] && [ ! -L "$target" ]; then
-            exit 0
-          fi
-          [ -d "$target" ]
           [ ! -L "$target" ]
           rm -rf --one-file-system -- "$target"
           [ ! -e "$target" ]

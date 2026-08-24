@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce fail-closed staging edge deployment and recovery authority."""
+"""Enforce the owner block and forward-only staging edge authority."""
 
 from __future__ import annotations
 
@@ -20,6 +20,14 @@ SWARM_MUTATION_COMMAND = re.compile(
     r"\b(?:service\s+(?:create|update|rollback|scale|rm)|"
     r"stack\s+(?:deploy|rm))\b",
     re.I,
+)
+AUTOMATIC_EDGE_RECOVERY_COMMAND = re.compile(
+    r"\bwrangler(?:@[^\s\"]+)?[^\n]*\brollback\b|"
+    r"\bdocker\s+service\s+rollback\b|"
+    r"\b(?:restore_after_apply_error|restore_origin|rollback_origin)\b|"
+    r"^\s*rollback\)\s*$|"
+    r"\brollback\s+\"\$EDGE_RUN_KEY\"",
+    re.I | re.M,
 )
 EXECUTABLE_SUFFIXES = {".sh", ".yml", ".yaml"}
 
@@ -59,6 +67,15 @@ def executable_mutation_paths(sources: Iterable[tuple[Path, str]]) -> list[Path]
     ]
 
 
+def executable_recovery_paths(sources: Iterable[tuple[Path, str]]) -> list[Path]:
+    return [
+        path
+        for path, source in sources
+        if path.suffix.lower() in EXECUTABLE_SUFFIXES
+        and AUTOMATIC_EDGE_RECOVERY_COMMAND.search(normalized_shell_source(source))
+    ]
+
+
 def main() -> int:
     workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
     safety = SAFETY_WORKFLOW.read_text(encoding="utf-8")
@@ -77,6 +94,12 @@ def main() -> int:
                 "node-version: '22.18.0'",
                 "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
                 '[ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]',
+                "owner-forward-only-block:",
+                "OWNER BLOCK — edge mutations are disabled",
+                "OWNER BLOCK: automatic rollback/recovery has been removed.",
+                "No Cloudflare, Worker, SSH, nginx, origin, or provider action is permitted.",
+                "exit 78",
+                "needs: owner-forward-only-block",
                 "Capture exact incumbent Worker and domain associations",
                 "versions upload",
                 "WRANGLER_OUTPUT_FILE_PATH",
@@ -88,17 +111,26 @@ def main() -> int:
                 "https://app.jeeb.fds-1.com/health/ready",
                 "https://cms.jeeb.fds-1.com/healthz",
                 "verify-authorized-wss.mjs",
-                "failure() && steps.worker-incumbent.outcome == 'success'",
-                'rollback "$EDGE_RUN_KEY" "$GITHUB_SHA"',
-                "RED + RESTORATION FAILED",
                 "StrictHostKeyChecking yes",
                 "JEEB_STAGING_SSH_KNOWN_HOSTS",
-                "realpath -m -- \"$HOME/$candidate\"",
                 '"$(dirname -- "$target")" = "$root"',
             ),
             "staging edge workflow",
         )
     )
+    block_start = workflow.find("  owner-forward-only-block:")
+    deploy_start = workflow.find("  deploy:")
+    if block_start < 0 or deploy_start < 0 or block_start >= deploy_start:
+        findings.append("owner block must be a separate prerequisite job before deploy")
+    else:
+        block_job = workflow[block_start:deploy_start]
+        for forbidden in ("uses:", "secrets.", "curl ", "ssh ", "npx ", "wrangler"):
+            if forbidden in block_job:
+                findings.append(
+                    f"owner block performs a provider or external action: {forbidden!r}"
+                )
+    if "if: ${{ failure()" in workflow or "if: failure()" in workflow:
+        findings.append("staging edge workflow still has an automatic failure handler")
     findings.extend(
         require(
             rollout,
@@ -108,17 +140,15 @@ def main() -> int:
                 '[ "$stage_ref" = ".jeeb-edge-deploy/$run_key" ]',
                 "verify_incumbent_origin()",
                 "verify_candidate_origin()",
-                "restore_origin()",
                 'recording > "$capture_dir/status"',
                 "write_status prepared",
                 "write_status applied",
                 "write_status verified",
-                "write_status restoring",
-                "write_status restored",
-                "prepared|applied|verified|restoring",
                 "cmp -s -- \"$state_dir/jeeb-direct-tls.conf\" \"$config\"",
+                "The snapshot is retained for audit only.",
                 "systemctl reload nginx",
-                "rollback)",
+                "apply)",
+                "finalize)",
             ),
             "staging origin rollout",
         )
@@ -173,8 +203,8 @@ def main() -> int:
             (
                 "Super Login Plus is retired",
                 "Authorized realtime edge-probe contract",
-                "Edge rollback and recovery gate",
-                "RED + RESTORATION FAILED",
+                "Owner-blocked forward-only edge deployment",
+                "No automatic Worker or origin rollback",
             ),
             "active staging runbook",
         )
@@ -203,15 +233,22 @@ def main() -> int:
             + ", ".join(map(str, executable_mutations))
         )
 
+    executable_recoveries = executable_recovery_paths(tracked_utf8())
+    if executable_recoveries:
+        findings.append(
+            "Infrastructure contains prohibited automatic rollback/recovery authority: "
+            + ", ".join(map(str, executable_recoveries))
+        )
+
     if findings:
         print("Deployment safety violations:")
         print("\n".join(findings))
         return 1
 
     print(
-        "Deployment safety verified: exact Worker version/domain state, atomic origin "
-        "recovery, real authorized Phoenix WSS, strict access, and no infra-owned "
-        "Swarm mutation."
+        "Deployment safety verified: loud owner block, forward-only edge code, exact "
+        "Worker/domain state, real authorized Phoenix WSS, strict access, and no "
+        "automatic rollback/recovery or infra-owned Swarm mutation."
     )
     return 0
 

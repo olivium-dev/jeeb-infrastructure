@@ -2,20 +2,8 @@ name: Deployment safety contract
 
 "on":
   pull_request:
-    paths:
-      - '.github/workflows/deployment-safety.yml'
-      - '.github/workflows/jeeb-staging-edge-deploy.yml'
-      - 'deploy/staging/**'
-      - 'deploy/staging-192.168.2.20.md'
-      - 'scripts/check-deployment-safety-policy.py'
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/deployment-safety.yml'
-      - '.github/workflows/jeeb-staging-edge-deploy.yml'
-      - 'deploy/staging/**'
-      - 'deploy/staging-192.168.2.20.md'
-      - 'scripts/check-deployment-safety-policy.py'
 
 permissions:
   contents: read

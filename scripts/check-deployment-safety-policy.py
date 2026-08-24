@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 
@@ -15,6 +16,12 @@ CONTRACT_WORKFLOW = ROOT / ".github/workflows/staging-edge-contract.yml"
 EDGE_ROLLOUT = ROOT / "deploy/staging/scripts/edge-origin-rollout.sh"
 WSS_PROBE = ROOT / "deploy/staging/scripts/verify-authorized-wss.mjs"
 ACTIVE_RUNBOOK = ROOT / "deploy/staging-192.168.2.20.md"
+SWARM_MUTATION_COMMAND = re.compile(
+    r"\b(?:service\s+(?:create|update|rollback|scale|rm)|"
+    r"stack\s+(?:deploy|rm))\b",
+    re.I,
+)
+EXECUTABLE_SUFFIXES = {".sh", ".yml", ".yaml"}
 
 
 def normalized_shell_source(source: str) -> str:
@@ -41,6 +48,15 @@ def tracked_utf8():
 
 def require(source: str, needles: tuple[str, ...], label: str) -> list[str]:
     return [f"{label} is missing {needle!r}" for needle in needles if needle not in source]
+
+
+def executable_mutation_paths(sources: Iterable[tuple[Path, str]]) -> list[Path]:
+    return [
+        path
+        for path, source in sources
+        if path.suffix.lower() in EXECUTABLE_SUFFIXES
+        and SWARM_MUTATION_COMMAND.search(normalized_shell_source(source))
+    ]
 
 
 def main() -> int:
@@ -127,7 +143,22 @@ def main() -> int:
     )
     findings.extend(
         require(
-            safety + contract,
+            safety,
+            (
+                "pull_request:",
+                "push:",
+                "branches: [main]",
+            ),
+            "deployment safety workflow trigger",
+        )
+    )
+    if re.search(r"(?m)^\s+paths(?:-ignore)?:", safety):
+        findings.append(
+            "deployment safety workflow must audit every pull request and main push"
+        )
+    findings.extend(
+        require(
+            contract,
             (
                 "'.github/workflows/jeeb-staging-edge-deploy.yml'",
                 "'deploy/staging/**'",
@@ -165,16 +196,7 @@ def main() -> int:
     if mutable_action.search(workflow):
         findings.append("staging edge workflow has a mutable external action reference")
 
-    mutation_command = re.compile(
-        r"\b(?:service\s+(?:create|update|scale|rm)|stack\s+(?:deploy|rm))\b",
-        re.I,
-    )
-    executable_mutations = [
-        path
-        for path, source in tracked_utf8()
-        if path.suffix.lower() in {".sh", ".yml", ".yaml"}
-        and mutation_command.search(normalized_shell_source(source))
-    ]
+    executable_mutations = executable_mutation_paths(tracked_utf8())
     if executable_mutations:
         findings.append(
             "Infrastructure duplicates application/datastore Swarm mutation authority: "

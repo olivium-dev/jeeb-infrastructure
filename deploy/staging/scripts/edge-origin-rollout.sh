@@ -28,22 +28,24 @@ flock -n 9
 
 write_status() {
   local status=$1 temporary=$state_dir/.status-$run_key
-  printf '%s\n' "$status" > "$temporary"
-  chmod 0600 "$temporary"
-  mv -f -- "$temporary" "$state_dir/status"
+  printf '%s\n' "$status" > "$temporary" || return
+  chmod 0600 "$temporary" || return
+  mv -f -- "$temporary" "$state_dir/status" || return
 }
 
 read_status() {
   local status
-  [ -f "$state_dir/status" ]
-  IFS= read -r status < "$state_dir/status"
-  printf '%s\n' "$status"
+  [ -f "$state_dir/status" ] || return
+  IFS= read -r status < "$state_dir/status" || return
+  printf '%s\n' "$status" || return
 }
 
 require_state_identity() {
-  [ -d "$state_dir" ]
-  [ ! -L "$state_dir" ]
-  [ "$(<"$state_dir/commit-sha")" = "$commit_sha" ]
+  local recorded_commit
+  [ -d "$state_dir" ] || return
+  [ ! -L "$state_dir" ] || return
+  IFS= read -r recorded_commit < "$state_dir/commit-sha" || return
+  [ "$recorded_commit" = "$commit_sha" ] || return
 }
 
 resolve_stage_dir() {
@@ -65,26 +67,27 @@ resolve_stage_dir() {
 }
 
 verify_nginx_runtime() {
-  nginx -t
-  systemctl is-active --quiet nginx
+  nginx -t || return
+  systemctl is-active --quiet nginx || return
 }
 
 verify_incumbent_origin() {
   local link_kind previous_target current_target
-  [ -f "$state_dir/jeeb-direct-tls.conf" ]
-  cmp -s -- "$state_dir/jeeb-direct-tls.conf" "$config"
-  link_kind=$(<"$state_dir/previous-current-kind")
+  [ -f "$state_dir/jeeb-direct-tls.conf" ] || return
+  cmp -s -- "$state_dir/jeeb-direct-tls.conf" "$config" || return
+  IFS= read -r link_kind < "$state_dir/previous-current-kind" || return
 
   case "$link_kind" in
     symlink)
-      previous_target=$(<"$state_dir/previous-current-target")
-      [ -L "$current_link" ]
-      current_target=$(readlink -- "$current_link")
-      [ "$current_target" = "$previous_target" ]
+      IFS= read -r previous_target \
+        < "$state_dir/previous-current-target" || return
+      [ -L "$current_link" ] || return
+      current_target=$(readlink -- "$current_link") || return
+      [ "$current_target" = "$previous_target" ] || return
       ;;
     absent)
-      [ ! -e "$current_link" ]
-      [ ! -L "$current_link" ]
+      [ ! -e "$current_link" ] || return
+      [ ! -L "$current_link" ] || return
       ;;
     *)
       echo 'The recorded incumbent association-link state is invalid.' >&2
@@ -92,7 +95,7 @@ verify_incumbent_origin() {
       ;;
   esac
 
-  verify_nginx_runtime
+  verify_nginx_runtime || return
 }
 
 verify_candidate_origin() {
@@ -117,29 +120,30 @@ verify_candidate_origin() {
 
 restore_origin() {
   local link_kind previous_target temporary_link temporary_config
-  require_state_identity
-  write_status restoring
+  require_state_identity || return
+  write_status restoring || return
 
   temporary_config=$config.restore-$run_key
   install -o root -g root -m 0644 \
-    "$state_dir/jeeb-direct-tls.conf" "$temporary_config"
-  mv -f -- "$temporary_config" "$config"
+    "$state_dir/jeeb-direct-tls.conf" "$temporary_config" || return
+  mv -f -- "$temporary_config" "$config" || return
 
-  link_kind=$(<"$state_dir/previous-current-kind")
+  IFS= read -r link_kind < "$state_dir/previous-current-kind" || return
   case "$link_kind" in
     symlink)
-      previous_target=$(<"$state_dir/previous-current-target")
+      IFS= read -r previous_target \
+        < "$state_dir/previous-current-target" || return
       temporary_link=$static_root/.current-restore-$run_key
-      rm -f -- "$temporary_link"
-      ln -s -- "$previous_target" "$temporary_link"
-      mv -Tf -- "$temporary_link" "$current_link"
+      rm -f -- "$temporary_link" || return
+      ln -s -- "$previous_target" "$temporary_link" || return
+      mv -Tf -- "$temporary_link" "$current_link" || return
       ;;
     absent)
       if [ -e "$current_link" ] && [ ! -L "$current_link" ]; then
         echo 'Refusing to remove a non-symlink association current path.' >&2
         return 42
       fi
-      rm -f -- "$current_link"
+      rm -f -- "$current_link" || return
       ;;
     *)
       echo 'The recorded incumbent association-link state is invalid.' >&2
@@ -147,20 +151,53 @@ restore_origin() {
       ;;
   esac
 
-  nginx -t
-  systemctl reload nginx
-  systemctl is-active --quiet nginx
-  verify_incumbent_origin
-  write_status restored
+  nginx -t || return
+  systemctl reload nginx || return
+  systemctl is-active --quiet nginx || return
+  verify_incumbent_origin || return
+  write_status restored || return
 }
 
 restore_after_apply_error() {
-  local exit_code=$?
+  local exit_code=$? restore_exit=0
   trap - ERR
-  if ! restore_origin; then
+  restore_origin || restore_exit=$?
+  if [ "$restore_exit" -ne 0 ]; then
     echo 'Automatic origin restoration failed; freeze edge deploys and page the operator.' >&2
   fi
   exit "$exit_code"
+}
+
+rollback_origin() {
+  local status
+  if [ ! -e "$state_dir" ]; then
+    verify_nginx_runtime || return
+    printf '%s\n' 'origin_state=untouched' || return
+    return 0
+  fi
+
+  require_state_identity || return
+  status=$(read_status) || return
+  case "$status" in
+    recording)
+      # Mutation begins only after the state becomes prepared. The snapshot
+      # is published atomically before staging continues, so recording proves
+      # the exact incumbent is still active and fully comparable.
+      verify_incumbent_origin || return
+      write_status restored || return
+      ;;
+    prepared|applied|verified|restoring)
+      restore_origin || return
+      ;;
+    restored)
+      verify_incumbent_origin || return
+      ;;
+    *)
+      echo "Unsupported rollout recovery state: $status" >&2
+      return 44
+      ;;
+  esac
+  printf '%s\n' 'origin_state=restored-and-verified' || return
 }
 
 case "$mode" in
@@ -250,34 +287,7 @@ case "$mode" in
     trap - ERR
     ;;
   rollback)
-    if [ ! -e "$state_dir" ]; then
-      verify_nginx_runtime
-      printf '%s\n' 'origin_state=untouched'
-      exit 0
-    fi
-
-    require_state_identity
-    status=$(read_status)
-    case "$status" in
-      recording)
-        # Mutation begins only after the state becomes prepared. The snapshot
-        # is published atomically before staging continues, so recording proves
-        # the exact incumbent is still active and fully comparable.
-        verify_incumbent_origin
-        write_status restored
-        ;;
-      prepared|applied|verified|restoring)
-        restore_origin
-        ;;
-      restored)
-        verify_incumbent_origin
-        ;;
-      *)
-        echo "Unsupported rollout recovery state: $status" >&2
-        exit 44
-        ;;
-    esac
-    printf '%s\n' 'origin_state=restored-and-verified'
+    rollback_origin
     ;;
   finalize)
     stage_dir=$(resolve_stage_dir)

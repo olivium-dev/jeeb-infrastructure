@@ -9,9 +9,11 @@ block approved staging deployments to this host.
 
 The environment was last fully validated on 2026-08-19 after datastore
 isolation, fleet deployment, public ingress validation, and a staging-only
-user-data cleanup. The public Super Login Plus roster intentionally contains
-only Nour and Karim. CMS administrator authentication is a separate control;
-there is no corresponding `Admin` row in the user-management database.
+user-data cleanup. That cleanup retained Nour and Karim as ordinary application
+users. Super Login Plus is retired and its public roster endpoint must return
+404; it is not an authentication path or a release gate. CMS administrator
+authentication is a separate control; there is no corresponding `Admin` row in
+the user-management database.
 
 The detailed data-operation record and verification evidence are in
 [`docs/staging-data-baseline-2026-08-19.md`](../docs/staging-data-baseline-2026-08-19.md).
@@ -52,6 +54,11 @@ pattern as the other working servers; no router port forwarding is required.
   `app.jeeb.fds-1.com` and `cms.jeeb.fds-1.com` and injects a runtime origin key.
 - The Worker maps those names to the proxied tunnel-only hostnames
   `jeeb-app-origin.fds-1.com` and `jeeb-cms-origin.fds-1.com` respectively.
+- Edge releases use `wrangler versions upload` followed by an exact version-ID
+  deployment. Those commands do not mutate Worker triggers. Before any origin
+  mutation, the workflow captures the immutable IDs and service/zone bindings
+  for exactly those two Custom Domains; candidate verification and recovery
+  both require the association snapshot to remain byte-for-byte unchanged.
 - `cloudflared` forwards both hidden hostnames to nginx TLS on loopback, using
   the corresponding public hostname for certificate and HTTP Host validation.
 - TCP/SSH remains at `jeeb-staging-ssh.fds-1.com` and routes to the server SSH
@@ -132,13 +139,47 @@ workflow or source file. The fleet uses the following secret names as needed:
   a dedicated staging user and update this contract in the same change.
 - Redis: `JEEB_REDIS_URL`, `HEARTBEAT_REDIS_URL`.
 - Identity and application: `JEEB_JWT_SIGNING_KEY`, `JEEB_JWT_ISSUER`,
-  `JEEB_SUPERADMIN_PASSCODE`, `JEEB_PHONE_HASH_PEPPER`,
-  `JEEB_FIREBASE_JSON`, `CASE_GATEWAY_CALLBACK_URL`.
+  `JEEB_PHONE_HASH_PEPPER`, `JEEB_FIREBASE_JSON`,
+  `CASE_GATEWAY_CALLBACK_URL`.
+- Authorized edge probe: `JEEB_STAGING_WSS_PROBE_MINT_KEY`, selected only for
+  `jeeb-gateway` and `jeeb-infrastructure`. It is a distinct random value of at
+  least 32 bytes and is never a JWT/Guardian/membership-ticket signing key.
 
 `JEEB_FIREBASE_JSON` may be stored as raw service-account JSON or base64. The
 workflow validates and normalizes it without logging it, then creates a
 service-specific Docker config. No secret value should appear in this runbook,
 workflow logs, commits, or shell history.
+
+### Authorized realtime edge-probe contract
+
+The edge workflow must prove a real public Phoenix connection; an anonymous
+401/403 is only a negative route check and can never make the deployment green.
+The gateway therefore owns a staging-only descriptor mint at
+`POST /internal/ops/staging/realtime-probe-descriptor` with this exact contract:
+
+- Require `X-Jeeb-Staging-Probe-Timestamp`,
+  `X-Jeeb-Staging-Probe-Nonce`, and
+  `X-Jeeb-Staging-Probe-Signature`. The signature is lowercase hex
+  HMAC-SHA256 over
+  `v1\nPOST\n/internal/ops/staging/realtime-probe-descriptor\n<TIMESTAMP>\n<NONCE>`
+  using `JEEB_STAGING_WSS_PROBE_MINT_KEY`.
+- Accept only a valid UUID nonce within 60 seconds, reject replay, expose the
+  route only in staging, and never accept the probe key as a bearer or signing
+  key for another surface.
+- Return a complete, short-lived descriptor for the non-privileged `client`
+  principal and the reserved, nonce-bound conversation
+  `edge-probe-<NONCE>` / topic `jeeb:chat:edge-probe-<NONCE>`. It must contain
+  `conversationId`, `topic`, `roleInConvo`, `socketUrl`, `token`, `ticket`, and
+  `expiresAt`; no real conversation or customer data is read or written.
+- The workflow requires the exact public socket URL, a 30-to-900-second
+  remaining lifetime, an actual WSS 101 upgrade, a successful Phoenix
+  heartbeat, a successful exact-topic join, and denial of the same join with a
+  deliberately forged membership ticket. Tokens and tickets are never logged.
+
+Until both the gateway endpoint and the matching environment secret exist, the
+edge deployment is intentionally fail-closed. A generic 401/403, a direct
+realtime token minter, or a long-lived user session is not an acceptable
+substitute.
 
 ## Staging datastore isolation
 
@@ -270,6 +311,33 @@ masked-call is local-only, and catalog is empty.
    edge version, inspect the Actions run and service logs, correct the fault,
    and dispatch a fresh immutable commit. Never bypass the health gate.
 
+### Edge rollback and recovery gate
+
+The edge workflow captures the incumbent Worker version, exact Worker Custom
+Domain associations, nginx bytes, and association-document symlink target
+before mutation. Origin state advances through
+`recording -> prepared -> applied -> verified`; recovery advances through
+`restoring -> restored`. A lost SSH response after apply or finalize is not
+treated as success: rollback accepts all post-recording states and verifies the
+recorded incumbent again.
+
+Any failed candidate, HTTPS, CMS, association, HSTS, authorized-WSS, finalize,
+or exact-cleanup gate triggers both recovery arms independently:
+
+1. Route 100% of Worker traffic back to the captured incumbent version and
+   query Cloudflare until that exact version is active.
+2. Restore the captured nginx file and association symlink atomically, run
+   `nginx -t`, reload nginx, and compare both restored objects to their snapshot.
+3. Require the two Custom Domain associations to equal the pre-mutation
+   snapshot and require public tunnel, gateway readiness, and CMS health to
+   return HTTPS 200.
+
+If either arm or any post-restore assertion fails, the verdict is
+`RED + RESTORATION FAILED`: freeze further edge dispatches and page on-call. If
+all assertions pass, the verdict remains `RED + RESTORED`; fix the defect and
+dispatch a new default-branch commit. There is no database migration or mobile
+binary mutation in this edge release.
+
 Useful non-secret checks:
 
 ```bash
@@ -288,7 +356,8 @@ Expected post-cleanup results:
 - All 24 active `jeeb-staging-*` Swarm services report `1/1`; the intentionally
   disabled `jeeb-staging-notification-candidate` reports `0/0`.
 - `https://cms.jeeb.fds-1.com/` returns HTTP 200.
-- `GET /api/User/super-login/users` returns exactly Nour and Karim.
+- `GET /api/User/demo-users` and `GET /api/User/super-login/users` both return
+  404; neither debug-login surface is part of staging authentication.
 - A token minted for either retained user with explicit `customer` and
   `driver` roles can call `GET /v1/users/me` successfully.
 

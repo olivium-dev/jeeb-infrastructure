@@ -140,6 +140,7 @@ Configure these via `gh secret set`:
 | `JEEB_STAGING_DEPLOY_USER` | Staging deployment user |
 | `JEEB_STAGING_SSH_KNOWN_HOSTS` | Exact staging SSH host-key entry |
 | `CLOUDFLARE_API_TOKEN` | Scoped token for the staging Worker and Custom Domains |
+| `JEEB_STAGING_WSS_PROBE_MINT_KEY` | Staging-only HMAC key for minting a nonce-bound, non-privileged realtime probe descriptor |
 
 ### For Production Environment
 

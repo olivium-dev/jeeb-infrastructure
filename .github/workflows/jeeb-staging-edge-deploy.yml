@@ -13,6 +13,8 @@ concurrency:
 env:
   WRANGLER_VERSION: '4.120.0'
   WRANGLER_CONFIG: deploy/staging/cloudflare/wrangler.toml
+  CLOUDFLARE_ACCOUNT_ID: '58198ae51392a2cc2d391867fb65da7e'
+  WORKER_NAME: jeeb-staging-host-router
   EDGE_RUN_KEY: ${{ github.run_id }}_${{ github.run_attempt }}
   REMOTE_STAGE: .jeeb-edge-deploy/${{ github.run_id }}_${{ github.run_attempt }}
 
@@ -39,15 +41,21 @@ jobs:
       - name: Check out the exact default-branch revision
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
+      - name: Install the pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.18.0'
+
       - name: Validate the vendored edge contract
         run: |
           set -euo pipefail
           python3 -m unittest discover \
             -s deploy/staging/tests -p 'test_*.py' -v
           node --check deploy/staging/cloudflare/jeeb-staging-router.mjs
+          node --check deploy/staging/scripts/verify-authorized-wss.mjs
           bash -n deploy/staging/scripts/edge-origin-rollout.sh
           sh -n deploy/staging/letsencrypt/renewal-hooks/deploy/jeeb-nginx
-          npx --yes "wrangler@$WRANGLER_VERSION" deploy --dry-run \
+          npx --yes "wrangler@$WRANGLER_VERSION" versions upload --dry-run \
             --config "$WRANGLER_CONFIG" \
             --outdir "$RUNNER_TEMP/jeeb-staging-worker-dry-run"
 
@@ -58,6 +66,7 @@ jobs:
           SSH_USER: ${{ secrets.JEEB_STAGING_DEPLOY_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.JEEB_STAGING_SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.JEEB_STAGING_SSH_KNOWN_HOSTS }}
+          WSS_PROBE_MINT_KEY: ${{ secrets.JEEB_STAGING_WSS_PROBE_MINT_KEY }}
         run: |
           set -euo pipefail
           : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
@@ -65,7 +74,9 @@ jobs:
           : "${SSH_USER:?JEEB_STAGING_DEPLOY_USER is required}"
           : "${SSH_PRIVATE_KEY:?JEEB_STAGING_SSH_PRIVATE_KEY is required}"
           : "${SSH_KNOWN_HOSTS:?JEEB_STAGING_SSH_KNOWN_HOSTS is required}"
+          : "${WSS_PROBE_MINT_KEY:?JEEB_STAGING_WSS_PROBE_MINT_KEY is required}"
           [ "${#CLOUDFLARE_API_TOKEN}" -ge 20 ]
+          [ "$(printf '%s' "$WSS_PROBE_MINT_KEY" | wc -c)" -ge 32 ]
 
       - name: Install pinned cloudflared and configure strict SSH
         env:
@@ -122,9 +133,11 @@ jobs:
             sudo systemctl is-active --quiet nginx
             sudo systemctl is-active --quiet cloudflared-jeeb-staging
             docker service inspect jeeb-staging-realtime-comunication-service \
-              --format "{{.Spec.EndpointSpec.Ports}}" | grep -Fq 10069'
+              --format "{{.Spec.EndpointSpec.Ports}}" | grep -Fq 10069
+            curl -fsS --max-time 5 http://127.0.0.1:10069/health >/dev/null
+            curl -fsS --max-time 5 http://127.0.0.1:10000/health/ready >/dev/null'
 
-      - name: Capture the exact incumbent Worker version
+      - name: Capture exact incumbent Worker and domain associations
         id: worker-incumbent
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -133,18 +146,47 @@ jobs:
           status_file=$RUNNER_TEMP/worker-status.json
           npx --yes "wrangler@$WRANGLER_VERSION" deployments status --json \
             --config "$WRANGLER_CONFIG" > "$status_file"
-          incumbent=$(jq -er "
-            (if type == \"array\" then .[0] else . end) as \$deployment
-            | (\$deployment.versions
-                // \$deployment.deployment.versions
-                // \$deployment.result.versions
+          incumbent=$(jq -er '
+            (if type == "array" then .[0] else . end) as $deployment
+            | ($deployment.versions
+                // $deployment.deployment.versions
+                // $deployment.result.versions
                 // empty)
             | map(select((.percentage // 100) == 100))
             | select(length == 1)
             | (.[0].version_id // .[0].id)
-          " "$status_file")
+          ' "$status_file")
           [[ "$incumbent" =~ ^[0-9a-f-]{32,64}$ ]]
           printf 'version=%s\n' "$incumbent" >> "$GITHUB_OUTPUT"
+
+          domain_response=$RUNNER_TEMP/incumbent-worker-domains-response.json
+          domain_snapshot=$RUNNER_TEMP/incumbent-worker-domains.json
+          curl -fsS --connect-timeout 5 --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -G "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
+            --data-urlencode "service=$WORKER_NAME" \
+            --data-urlencode 'zone_name=fds-1.com' \
+            -o "$domain_response"
+          jq -e '
+            .success == true
+            and (.result | length == 2)
+            and ([.result[].hostname] | sort
+              == ["app.jeeb.fds-1.com", "cms.jeeb.fds-1.com"])
+            and all(.result[]; .service == "jeeb-staging-host-router")
+            and all(.result[]; .zone_name == "fds-1.com")
+            and all(.result[]; (.id | type == "string" and length > 0))
+            and all(.result[]; (.cert_id | type == "string" and length > 0))
+          ' "$domain_response" >/dev/null
+          jq -S '
+            [.result[] | {
+              id,
+              hostname,
+              service,
+              zone_id,
+              zone_name,
+              environment: (.environment // "")
+            }] | sort_by(.hostname)
+          ' "$domain_response" > "$domain_snapshot"
 
       - name: Stage immutable origin candidates
         run: |
@@ -159,69 +201,148 @@ jobs:
             jeeb-staging:"$REMOTE_STAGE/apple-app-site-association"
           scp deploy/staging/well-known/assetlinks.json \
             jeeb-staging:"$REMOTE_STAGE/assetlinks.json"
-          scp deploy/staging/scripts/edge-origin-rollout.sh \
-            jeeb-staging:"$REMOTE_STAGE/edge-origin-rollout.sh"
 
       - name: Apply nginx and association documents atomically
         id: origin
         run: |
           set -euo pipefail
-          # Remote HOME expands on the target; run/commit identifiers expand locally.
-          # shellcheck disable=SC2029
-          ssh jeeb-staging sudo bash \
-            "\$HOME/$REMOTE_STAGE/edge-origin-rollout.sh" \
-            apply "$EDGE_RUN_KEY" "$GITHUB_SHA" "\$HOME/$REMOTE_STAGE"
+          ssh jeeb-staging sudo bash -s -- \
+            apply "$EDGE_RUN_KEY" "$GITHUB_SHA" "$REMOTE_STAGE" \
+            < deploy/staging/scripts/edge-origin-rollout.sh
 
-      - name: Deploy the commit-identified Worker version
-        id: worker
+      - name: Upload and deploy the exact commit-identified Worker version
+        id: worker-candidate
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/worker-upload-output.jsonl
         run: |
           set -euo pipefail
-          npx --yes "wrangler@$WRANGLER_VERSION" deploy \
+          : > "$WRANGLER_OUTPUT_FILE_PATH"
+          worker_tag="git-${GITHUB_SHA:0:12}-r${GITHUB_RUN_ID}a${GITHUB_RUN_ATTEMPT}"
+          npx --yes "wrangler@$WRANGLER_VERSION" versions upload \
             --config "$WRANGLER_CONFIG" \
-            --tag "$GITHUB_SHA" \
+            --tag "$worker_tag" \
             --message "git:$GITHUB_SHA" \
             --keep-vars \
             --strict
+          candidate=$(jq -s -er '
+            [.[] | select(.type == "version-upload")] | last | .version_id
+          ' "$WRANGLER_OUTPUT_FILE_PATH")
+          [[ "$candidate" =~ ^[0-9a-f-]{32,64}$ ]]
+          printf 'version=%s\n' "$candidate" >> "$GITHUB_OUTPUT"
+          npx --yes "wrangler@$WRANGLER_VERSION" versions deploy \
+            "$candidate@100%" \
+            --config "$WRANGLER_CONFIG" \
+            --message "git:$GITHUB_SHA" \
+            --yes
 
-      - name: Verify public HTTPS, association identities, and WSS routing
-        id: public-verify
+      - name: Prove candidate Worker is active and domains did not drift
+        env:
+          CANDIDATE_WORKER_VERSION: ${{ steps.worker-candidate.outputs.version }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          attempts=0
-          until [ "$attempts" -ge 12 ]; do
-            attempts=$((attempts + 1))
-            if curl -fsS --connect-timeout 5 --max-time 10 \
-              https://app.jeeb.fds-1.com/__tunnel_health >/dev/null; then
-              break
-            fi
-            sleep "$attempts"
-          done
-          [ "$attempts" -lt 12 ]
+          [[ "$CANDIDATE_WORKER_VERSION" =~ ^[0-9a-f-]{32,64}$ ]]
+          status_file=$RUNNER_TEMP/worker-candidate-active.json
+          npx --yes "wrangler@$WRANGLER_VERSION" deployments status --json \
+            --config "$WRANGLER_CONFIG" > "$status_file"
+          active=$(jq -er '
+            (if type == "array" then .[0] else . end) as $deployment
+            | ($deployment.versions
+                // $deployment.deployment.versions
+                // $deployment.result.versions
+                // empty)
+            | map(select((.percentage // 100) == 100))
+            | select(length == 1)
+            | (.[0].version_id // .[0].id)
+          ' "$status_file")
+          [ "$active" = "$CANDIDATE_WORKER_VERSION" ]
 
+          domain_response=$RUNNER_TEMP/candidate-worker-domains-response.json
+          domain_snapshot=$RUNNER_TEMP/candidate-worker-domains.json
+          curl -fsS --connect-timeout 5 --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -G "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
+            --data-urlencode "service=$WORKER_NAME" \
+            --data-urlencode 'zone_name=fds-1.com' \
+            -o "$domain_response"
+          jq -e '.success == true' "$domain_response" >/dev/null
+          jq -S '
+            [.result[] | {
+              id,
+              hostname,
+              service,
+              zone_id,
+              zone_name,
+              environment: (.environment // "")
+            }] | sort_by(.hostname)
+          ' "$domain_response" > "$domain_snapshot"
+          cmp "$RUNNER_TEMP/incumbent-worker-domains.json" "$domain_snapshot"
+          printf 'worker_version=%s domain_associations=unchanged\n' "$active"
+
+      - name: Verify public HTTPS, associations, CMS, and authorized Phoenix WSS
+        id: public-verify
+        env:
+          JEEB_STAGING_WSS_PROBE_MINT_KEY: ${{ secrets.JEEB_STAGING_WSS_PROBE_MINT_KEY }}
+        run: |
+          set -euo pipefail
           response_headers=$RUNNER_TEMP/response-headers
           response_body=$RUNNER_TEMP/response-body
+
+          poll_https_200() {
+            local label=$1 url=$2 attempt result code elapsed
+            for attempt in $(seq 1 30); do
+              if result=$(curl -sS --proto '=https' --tlsv1.2 \
+                --connect-timeout 5 --max-time 10 \
+                -D "$response_headers" -o "$response_body" \
+                -w '%{http_code} %{time_total}' "$url"); then
+                read -r code elapsed <<< "$result"
+                if [ "$code" = 200 ]; then
+                  grep -Eiq '^strict-transport-security: max-age=31536000\r?$' \
+                    "$response_headers"
+                  printf '%s status=%s response_seconds=%s attempt=%s\n' \
+                    "$label" "$code" "$elapsed" "$attempt"
+                  return 0
+                fi
+              fi
+              sleep 2
+            done
+            echo "::error::$label did not return HTTPS 200 within 60 seconds"
+            return 1
+          }
+
+          poll_https_200 tunnel \
+            https://app.jeeb.fds-1.com/__tunnel_health
+          poll_https_200 gateway-readiness \
+            https://app.jeeb.fds-1.com/health/ready
+          poll_https_200 cms-health \
+            https://cms.jeeb.fds-1.com/healthz
+          grep -Eq '^healthy\r?$' "$response_body"
+
           curl -sS --connect-timeout 5 --max-time 10 \
             -D "$response_headers" -o "$response_body" \
             http://app.jeeb.fds-1.com/health/ready
-          grep -Eq '^HTTP/[0-9.]+ (301|308) ' "$response_headers"
+          grep -Eq '^HTTP/[0-9.]+ 308 ' "$response_headers"
           grep -Eiq '^location: https://app\.jeeb\.fds-1\.com/health/ready\r?$' \
             "$response_headers"
 
           for document in apple-app-site-association assetlinks.json; do
-            curl -fsS --compressed --connect-timeout 5 --max-time 10 \
+            curl -fsS --compressed --proto '=https' --tlsv1.2 \
+              --connect-timeout 5 --max-time 10 \
               -D "$response_headers" \
               -o "$response_body" \
               "https://app.jeeb.fds-1.com/.well-known/$document"
             grep -Eq '^HTTP/[0-9.]+ 200 ' "$response_headers"
             grep -Eiq '^content-type: application/json([; ]|\r?$)' \
               "$response_headers"
+            grep -Eiq '^strict-transport-security: max-age=31536000\r?$' \
+              "$response_headers"
             cmp "deploy/staging/well-known/$document" "$response_body"
           done
 
-          websocket_key=$(printf '%s' 'the sample nonce' | base64 -w 0)
-          curl -sS --http1.1 --connect-timeout 5 --max-time 10 \
+          websocket_key=$(printf '%s' 'jeeb-edge-probe!' | base64 -w 0)
+          curl -sS --http1.1 --proto '=https' --tlsv1.2 \
+            --connect-timeout 5 --max-time 10 \
             -D "$response_headers" -o "$response_body" \
             -H 'Connection: Upgrade' \
             -H 'Upgrade: websocket' \
@@ -234,74 +355,217 @@ jobs:
           if grep -Eiq '^content-type: application/problem\+json' "$response_headers" \
             || grep -Eiq '^www-authenticate: Bearer' "$response_headers" \
             || grep -Eiq '^x-correlation-id:' "$response_headers"; then
-            echo '::error::The WebSocket request still reached ASP.NET gateway auth.'
+            echo '::error::Unauthenticated WSS near miss reached ASP.NET gateway auth.'
             exit 42
           fi
+          printf 'unauthenticated_wss status=%s route=phoenix\n' "$wss_status"
 
-      - name: Record the active Worker version and finalize origin state
+          node deploy/staging/scripts/verify-authorized-wss.mjs
+
+      - name: Verify active edge again and finalize origin state
         env:
+          CANDIDATE_WORKER_VERSION: ${{ steps.worker-candidate.outputs.version }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           INCUMBENT_WORKER_VERSION: ${{ steps.worker-incumbent.outputs.version }}
         run: |
           set -euo pipefail
-          status_file=$RUNNER_TEMP/worker-active.json
+          status_file=$RUNNER_TEMP/worker-final.json
           npx --yes "wrangler@$WRANGLER_VERSION" deployments status --json \
             --config "$WRANGLER_CONFIG" > "$status_file"
-          active=$(jq -er "
-            (if type == \"array\" then .[0] else . end) as \$deployment
-            | (\$deployment.versions
-                // \$deployment.deployment.versions
-                // \$deployment.result.versions
+          active=$(jq -er '
+            (if type == "array" then .[0] else . end) as $deployment
+            | ($deployment.versions
+                // $deployment.deployment.versions
+                // $deployment.result.versions
                 // empty)
             | map(select((.percentage // 100) == 100))
             | select(length == 1)
             | (.[0].version_id // .[0].id)
-          " "$status_file")
-          [[ "$active" =~ ^[0-9a-f-]{32,64}$ ]]
-          # Remote HOME expands on the target; run/commit identifiers expand locally.
-          # shellcheck disable=SC2029
-          ssh jeeb-staging sudo bash \
-            "\$HOME/$REMOTE_STAGE/edge-origin-rollout.sh" \
-            finalize "$EDGE_RUN_KEY" "$GITHUB_SHA" "\$HOME/$REMOTE_STAGE"
+          ' "$status_file")
+          [ "$active" = "$CANDIDATE_WORKER_VERSION" ]
+
+          domain_response=$RUNNER_TEMP/final-worker-domains-response.json
+          domain_snapshot=$RUNNER_TEMP/final-worker-domains.json
+          curl -fsS --connect-timeout 5 --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -G "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
+            --data-urlencode "service=$WORKER_NAME" \
+            --data-urlencode 'zone_name=fds-1.com' \
+            -o "$domain_response"
+          jq -e '.success == true' "$domain_response" >/dev/null
+          jq -S '
+            [.result[] | {
+              id,
+              hostname,
+              service,
+              zone_id,
+              zone_name,
+              environment: (.environment // "")
+            }] | sort_by(.hostname)
+          ' "$domain_response" > "$domain_snapshot"
+          cmp "$RUNNER_TEMP/incumbent-worker-domains.json" "$domain_snapshot"
+
+          ssh jeeb-staging sudo bash -s -- \
+            finalize "$EDGE_RUN_KEY" "$GITHUB_SHA" "$REMOTE_STAGE" \
+            < deploy/staging/scripts/edge-origin-rollout.sh
           {
             printf '### Jeeb staging edge deployment\n\n'
             printf -- "- Git commit: \`%s\`\n" "$GITHUB_SHA"
             printf -- "- Worker version: \`%s\`\n" "$active"
             printf -- "- Previous Worker version: \`%s\`\n" \
               "$INCUMBENT_WORKER_VERSION"
-            printf -- '- nginx origin state: verified\n'
+            printf -- '- Worker domains: exact incumbent associations retained\n'
+            printf -- '- nginx and association origin state: verified\n'
+            printf -- '- public gateway/CMS/WSS gate: verified\n'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Restore Worker and origin after any failed live gate
-        if: ${{ failure() && steps.origin.outcome == 'success' }}
+      - name: Clean exact remote candidate directory
+        run: |
+          set -euo pipefail
+          ssh jeeb-staging bash -s -- "$REMOTE_STAGE" <<'REMOTE'
+          set -euo pipefail
+          candidate=$1
+          [[ "$candidate" =~ ^\.jeeb-edge-deploy/([0-9]+)_([0-9]+)$ ]]
+          root_path=$HOME/.jeeb-edge-deploy
+          [ -d "$root_path" ]
+          [ ! -L "$root_path" ]
+          root=$(realpath -e -- "$root_path")
+          target=$(realpath -e -- "$HOME/$candidate")
+          [ "$(dirname -- "$target")" = "$root" ]
+          [[ "$(basename -- "$target")" =~ ^[0-9]+_[0-9]+$ ]]
+          [ ! -L "$target" ]
+          rm -rf --one-file-system -- "$target"
+          [ ! -e "$target" ]
+          [ ! -L "$target" ]
+          REMOTE
+
+      - name: Restore Worker and origin independently after any failed gate
+        if: ${{ failure() && steps.worker-incumbent.outcome == 'success' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           INCUMBENT_WORKER_VERSION: ${{ steps.worker-incumbent.outputs.version }}
         run: |
-          set -euo pipefail
-          npx --yes "wrangler@$WRANGLER_VERSION" rollback \
-            "$INCUMBENT_WORKER_VERSION" \
-            --config "$WRANGLER_CONFIG" \
-            --message "automatic restoration after failed git:$GITHUB_SHA" \
-            --yes
-          # Remote HOME expands on the target; run/commit identifiers expand locally.
-          # shellcheck disable=SC2029
-          ssh jeeb-staging sudo bash \
-            "\$HOME/$REMOTE_STAGE/edge-origin-rollout.sh" \
-            rollback "$EDGE_RUN_KEY" "$GITHUB_SHA" "\$HOME/$REMOTE_STAGE"
-          echo '::error::Live edge verification failed; Worker and nginx were restored.'
+          set -uo pipefail
+          recovery_failed=0
+
+          active_worker() {
+            local destination=$1
+            npx --yes "wrangler@$WRANGLER_VERSION" deployments status --json \
+              --config "$WRANGLER_CONFIG" > "$destination" || return 1
+            jq -er '
+              (if type == "array" then .[0] else . end) as $deployment
+              | ($deployment.versions
+                  // $deployment.deployment.versions
+                  // $deployment.result.versions
+                  // empty)
+              | map(select((.percentage // 100) == 100))
+              | select(length == 1)
+              | (.[0].version_id // .[0].id)
+            ' "$destination"
+          }
+
+          current=$(active_worker "$RUNNER_TEMP/worker-before-restore.json")
+          if [ "$current" != "$INCUMBENT_WORKER_VERSION" ]; then
+            if ! npx --yes "wrangler@$WRANGLER_VERSION" rollback \
+              "$INCUMBENT_WORKER_VERSION" \
+              --config "$WRANGLER_CONFIG" \
+              --message "automatic restoration after failed git:$GITHUB_SHA" \
+              --yes; then
+              echo '::error::Worker restoration command failed.'
+              recovery_failed=1
+            fi
+          fi
+          restored_worker=$(active_worker "$RUNNER_TEMP/worker-after-restore.json")
+          if [ "$restored_worker" != "$INCUMBENT_WORKER_VERSION" ]; then
+            echo '::error::Worker did not converge to the captured incumbent version.'
+            recovery_failed=1
+          else
+            printf 'worker_restore version=%s status=verified\n' "$restored_worker"
+          fi
+
+          if ssh jeeb-staging sudo bash -s -- \
+            rollback "$EDGE_RUN_KEY" "$GITHUB_SHA" "$REMOTE_STAGE" \
+            < deploy/staging/scripts/edge-origin-rollout.sh; then
+            echo 'origin_restore status=verified'
+          else
+            echo '::error::Origin restoration or exact origin verification failed.'
+            recovery_failed=1
+          fi
+
+          domain_response=$RUNNER_TEMP/restored-worker-domains-response.json
+          domain_snapshot=$RUNNER_TEMP/restored-worker-domains.json
+          if curl -fsS --connect-timeout 5 --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -G "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
+            --data-urlencode "service=$WORKER_NAME" \
+            --data-urlencode 'zone_name=fds-1.com' \
+            -o "$domain_response" \
+            && jq -e '.success == true' "$domain_response" >/dev/null \
+            && jq -S '
+              [.result[] | {
+                id,
+                hostname,
+                service,
+                zone_id,
+                zone_name,
+                environment: (.environment // "")
+              }] | sort_by(.hostname)
+            ' "$domain_response" > "$domain_snapshot" \
+            && cmp "$RUNNER_TEMP/incumbent-worker-domains.json" "$domain_snapshot"; then
+            echo 'worker_domain_restore status=unchanged'
+          else
+            echo '::error::Worker domain associations drifted from the incumbent snapshot.'
+            recovery_failed=1
+          fi
+
+          for probe in \
+            https://app.jeeb.fds-1.com/__tunnel_health \
+            https://app.jeeb.fds-1.com/health/ready \
+            https://cms.jeeb.fds-1.com/healthz; do
+            result=$(curl -sS --proto '=https' --tlsv1.2 \
+              --connect-timeout 5 --max-time 10 \
+              -o /dev/null -w '%{http_code} %{time_total}' "$probe")
+            read -r status elapsed <<< "$result"
+            if [ "$status" != 200 ]; then
+              echo "::error::Post-restore public probe failed: $probe -> $status"
+              recovery_failed=1
+            else
+              printf 'post_restore_probe=%s status=%s response_seconds=%s\n' \
+                "$probe" "$status" "$elapsed"
+            fi
+          done
+
+          if [ "$recovery_failed" -ne 0 ]; then
+            echo '::error::RED + RESTORATION FAILED: freeze edge deploys and page on-call.'
+          else
+            echo '::error::RED + RESTORED: all captured incumbent state was verified.'
+          fi
           exit 1
 
-      - name: Clean exact remote candidate directory
-        if: always()
+      - name: Clean exact remote candidate after a failed run
+        if: ${{ failure() }}
         run: |
           set -euo pipefail
           ssh jeeb-staging bash -s -- "$REMOTE_STAGE" <<'REMOTE'
-          set -eu
+          set -euo pipefail
           candidate=$1
-          case "$candidate" in
-            .jeeb-edge-deploy/[0-9]*_[0-9]*) ;;
-            *) exit 65 ;;
-          esac
-          rm -rf -- "$HOME/$candidate"
+          [[ "$candidate" =~ ^\.jeeb-edge-deploy/([0-9]+)_([0-9]+)$ ]]
+          root_path=$HOME/.jeeb-edge-deploy
+          if [ ! -e "$root_path" ] && [ ! -L "$root_path" ]; then
+            exit 0
+          fi
+          [ -d "$root_path" ]
+          [ ! -L "$root_path" ]
+          root=$(realpath -e -- "$root_path")
+          target=$(realpath -m -- "$HOME/$candidate")
+          [ "$(dirname -- "$target")" = "$root" ]
+          [[ "$(basename -- "$target")" =~ ^[0-9]+_[0-9]+$ ]]
+          if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+            exit 0
+          fi
+          [ -d "$target" ]
+          [ ! -L "$target" ]
+          rm -rf --one-file-system -- "$target"
+          [ ! -e "$target" ]
+          [ ! -L "$target" ]
           REMOTE

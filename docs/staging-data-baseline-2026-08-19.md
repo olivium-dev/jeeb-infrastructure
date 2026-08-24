@@ -1,5 +1,10 @@
 # Jeeb staging data baseline: 2026-08-19
 
+> Historical evidence only. The Super Login Plus roster recorded below was a
+> point-in-time cleanup assertion; that public debug-login surface is now
+> retired and must return 404. Use `deploy/staging-192.168.2.20.md` for the
+> active staging release gates.
+
 ## Purpose
 
 This record documents the staging-only user cleanup performed on the active

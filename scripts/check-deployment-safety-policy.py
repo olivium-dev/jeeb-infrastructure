@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce staging edge restoration and keep Swarm authority out of infra."""
+"""Enforce fail-closed staging edge deployment and recovery authority."""
 
 from __future__ import annotations
 
@@ -10,7 +10,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EDGE_WORKFLOW = ROOT / ".github/workflows/jeeb-staging-edge-deploy.yml"
+SAFETY_WORKFLOW = ROOT / ".github/workflows/deployment-safety.yml"
+CONTRACT_WORKFLOW = ROOT / ".github/workflows/staging-edge-contract.yml"
 EDGE_ROLLOUT = ROOT / "deploy/staging/scripts/edge-origin-rollout.sh"
+WSS_PROBE = ROOT / "deploy/staging/scripts/verify-authorized-wss.mjs"
+ACTIVE_RUNBOOK = ROOT / "deploy/staging-192.168.2.20.md"
 
 
 def normalized_shell_source(source: str) -> str:
@@ -41,7 +45,11 @@ def require(source: str, needles: tuple[str, ...], label: str) -> list[str]:
 
 def main() -> int:
     workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+    safety = SAFETY_WORKFLOW.read_text(encoding="utf-8")
+    contract = CONTRACT_WORKFLOW.read_text(encoding="utf-8")
     rollout = EDGE_ROLLOUT.read_text(encoding="utf-8")
+    wss_probe = WSS_PROBE.read_text(encoding="utf-8")
+    runbook = ACTIVE_RUNBOOK.read_text(encoding="utf-8")
     findings: list[str] = []
 
     findings.extend(
@@ -49,16 +57,28 @@ def main() -> int:
             workflow,
             (
                 "workflow_dispatch:",
-                'environment: staging',
-                'DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}',
+                "environment: staging",
+                "node-version: '22.18.0'",
+                "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
                 '[ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]',
-                "Capture the exact incumbent Worker version",
-                'wrangler@$WRANGLER_VERSION\" rollback',
-                "failure() && steps.origin.outcome == 'success'",
+                "Capture exact incumbent Worker and domain associations",
+                "versions upload",
+                "WRANGLER_OUTPUT_FILE_PATH",
+                '"$candidate@100%"',
+                '[ "$active" = "$CANDIDATE_WORKER_VERSION" ]',
+                "/workers/domains",
+                'cmp "$RUNNER_TEMP/incumbent-worker-domains.json"',
+                "JEEB_STAGING_WSS_PROBE_MINT_KEY",
+                "https://app.jeeb.fds-1.com/health/ready",
+                "https://cms.jeeb.fds-1.com/healthz",
+                "verify-authorized-wss.mjs",
+                "failure() && steps.worker-incumbent.outcome == 'success'",
+                'rollback "$EDGE_RUN_KEY" "$GITHUB_SHA"',
+                "RED + RESTORATION FAILED",
                 "StrictHostKeyChecking yes",
                 "JEEB_STAGING_SSH_KNOWN_HOSTS",
-                "CLOUDFLARE_API_TOKEN",
-                "Verify public HTTPS, association identities, and WSS routing",
+                "realpath -m -- \"$HOME/$candidate\"",
+                '"$(dirname -- "$target")" = "$root"',
             ),
             "staging edge workflow",
         )
@@ -69,14 +89,67 @@ def main() -> int:
             (
                 '[ "$(hostname -s)" = "olivium-ephemerals" ]',
                 "grep -Fxq '192.168.2.20'",
+                '[ "$stage_ref" = ".jeeb-edge-deploy/$run_key" ]',
+                "verify_incumbent_origin()",
+                "verify_candidate_origin()",
                 "restore_origin()",
-                "nginx -t",
+                'recording > "$capture_dir/status"',
+                "write_status prepared",
+                "write_status applied",
+                "write_status verified",
+                "write_status restoring",
+                "write_status restored",
+                "prepared|applied|verified|restoring",
+                "cmp -s -- \"$state_dir/jeeb-direct-tls.conf\" \"$config\"",
                 "systemctl reload nginx",
                 "rollback)",
             ),
             "staging origin rollout",
         )
     )
+    findings.extend(
+        require(
+            wss_probe,
+            (
+                'createHmac("sha256", mintKey)',
+                'descriptorPath = "/internal/ops/staging/realtime-probe-descriptor"',
+                'socketUrl.protocol !== "wss:"',
+                'socketUrl.hostname !== publicHost',
+                '"heartbeat"',
+                '"phx_join"',
+                '"not_in_membership"',
+                "forged_ticket=denied",
+                '"authorized WSS request did not receive a 101 upgrade"',
+                "remainingMs < 30_000 || remainingMs > 900_000",
+            ),
+            "authorized WSS probe",
+        )
+    )
+    findings.extend(
+        require(
+            safety + contract,
+            (
+                "'.github/workflows/jeeb-staging-edge-deploy.yml'",
+                "'deploy/staging/**'",
+                "'scripts/check-deployment-safety-policy.py'",
+            ),
+            "edge contract path filters",
+        )
+    )
+    findings.extend(
+        require(
+            runbook,
+            (
+                "Super Login Plus is retired",
+                "Authorized realtime edge-probe contract",
+                "Edge rollback and recovery gate",
+                "RED + RESTORATION FAILED",
+            ),
+            "active staging runbook",
+        )
+    )
+    if "returns exactly Nour and Karim" in runbook:
+        findings.append("active staging runbook still treats Super Login as a release gate")
 
     for forbidden in (
         "StrictHostKeyChecking accept-new",
@@ -114,8 +187,9 @@ def main() -> int:
         return 1
 
     print(
-        "Deployment safety verified: default-branch edge deploy, strict access, "
-        "live gates, automatic restoration, and no infra-owned Swarm mutation."
+        "Deployment safety verified: exact Worker version/domain state, atomic origin "
+        "recovery, real authorized Phoenix WSS, strict access, and no infra-owned "
+        "Swarm mutation."
     )
     return 0
 

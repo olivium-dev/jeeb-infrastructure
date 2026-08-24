@@ -68,7 +68,7 @@ class DirectTlsContractTests(unittest.TestCase):
             2,
         )
         self.assertEqual(self.text.count("ssl_protocols TLSv1.2 TLSv1.3;"), 2)
-        self.assertEqual(self.text.count("add_header Strict-Transport-Security"), 2)
+        self.assertEqual(self.text.count("add_header Strict-Transport-Security"), 4)
         self.assertEqual(self.text.count("add_header X-Content-Type-Options"), 4)
         self.assertNotIn("ssl_protocols TLSv1 ", self.text)
 
@@ -115,6 +115,13 @@ class DirectTlsContractTests(unittest.TestCase):
             self.assertIn(
                 f"alias /var/www/jeeb-staging-well-known/current/{filename};",
                 self.text,
+            )
+            location = self.text.split(f"location = {public_path} {{", 1)[1].split(
+                "\n    }", 1
+            )[0]
+            self.assertIn(
+                'add_header Strict-Transport-Security "max-age=31536000" always;',
+                location,
             )
         self.assertGreaterEqual(self.text.count("default_type application/json;"), 2)
 

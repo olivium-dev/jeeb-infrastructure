@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo '::error::OWNER BLOCK: forward-only edge promotion is pending approval; no origin mutation was attempted.' >&2
+exit 78
+
 mode=${1:?mode is required}
 run_key=${2:?run key is required}
 commit_sha=${3:?commit SHA is required}

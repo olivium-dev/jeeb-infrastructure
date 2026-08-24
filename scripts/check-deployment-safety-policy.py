@@ -146,6 +146,8 @@ def main() -> int:
                 "write_status verified",
                 "cmp -s -- \"$state_dir/jeeb-direct-tls.conf\" \"$config\"",
                 "The snapshot is retained for audit only.",
+                "OWNER BLOCK: forward-only edge promotion is pending approval",
+                "exit 78",
                 "systemctl reload nginx",
                 "apply)",
                 "finalize)",
@@ -153,6 +155,13 @@ def main() -> int:
             "staging origin rollout",
         )
     )
+    script_block = rollout.find("OWNER BLOCK: forward-only edge promotion")
+    script_stop = rollout.find("exit 78", script_block)
+    first_host_access = rollout.find("hostname -s")
+    if not (0 <= script_block < script_stop < first_host_access):
+        findings.append(
+            "origin rollout must stop loudly before argument, host, tool, or mutation access"
+        )
     findings.extend(
         require(
             wss_probe,

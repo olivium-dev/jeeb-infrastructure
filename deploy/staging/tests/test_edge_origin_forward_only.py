@@ -20,6 +20,20 @@ class EdgeOriginForwardOnlyTests(unittest.TestCase):
         modes = re.findall(r"(?m)^  ([a-z][a-z-]*)\)$", self.source)
         self.assertEqual(modes, ["apply", "finalize"])
 
+    def test_direct_invocation_is_blocked_before_any_tool_or_host_access(self) -> None:
+        block = self.source.index("OWNER BLOCK: forward-only edge promotion")
+        stop = self.source.index("exit 78", block)
+        for marker in (
+            "mode=${1:?mode is required}",
+            'hostname -s',
+            "ip -4 -o addr",
+            'install -d -o root',
+            'flock -n 9',
+            'systemctl reload nginx',
+        ):
+            with self.subTest(marker=marker):
+                self.assertGreater(self.source.index(marker), stop)
+
     def test_automatic_recovery_authority_is_absent(self) -> None:
         for forbidden in (
             "restore_origin()",

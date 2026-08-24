@@ -1,0 +1,307 @@
+name: jeeb-staging-edge-deploy
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jeeb-staging-edge
+  cancel-in-progress: false
+
+env:
+  WRANGLER_VERSION: '4.120.0'
+  WRANGLER_CONFIG: deploy/staging/cloudflare/wrangler.toml
+  EDGE_RUN_KEY: ${{ github.run_id }}_${{ github.run_attempt }}
+  REMOTE_STAGE: .jeeb-edge-deploy/${{ github.run_id }}_${{ github.run_attempt }}
+
+jobs:
+  default-branch-gate:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Refuse non-default-branch dispatch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF_TYPE" = branch ]
+          [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ] || {
+            echo '::error::Staging edge deploys are allowed only from the default branch.'
+            exit 1
+          }
+
+  deploy:
+    needs: default-branch-gate
+    runs-on: ubuntu-22.04
+    environment: staging
+    steps:
+      - name: Check out the exact default-branch revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Validate the vendored edge contract
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover \
+            -s deploy/staging/tests -p 'test_*.py' -v
+          node --check deploy/staging/cloudflare/jeeb-staging-router.mjs
+          bash -n deploy/staging/scripts/edge-origin-rollout.sh
+          sh -n deploy/staging/letsencrypt/renewal-hooks/deploy/jeeb-nginx
+          npx --yes "wrangler@$WRANGLER_VERSION" deploy --dry-run \
+            --config "$WRANGLER_CONFIG" \
+            --outdir "$RUNNER_TEMP/jeeb-staging-worker-dry-run"
+
+      - name: Preflight protected access without exposing values
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SSH_HOST: ${{ secrets.JEEB_STAGING_SSH_HOST }}
+          SSH_USER: ${{ secrets.JEEB_STAGING_DEPLOY_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.JEEB_STAGING_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.JEEB_STAGING_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+          : "${SSH_HOST:?JEEB_STAGING_SSH_HOST is required}"
+          : "${SSH_USER:?JEEB_STAGING_DEPLOY_USER is required}"
+          : "${SSH_PRIVATE_KEY:?JEEB_STAGING_SSH_PRIVATE_KEY is required}"
+          : "${SSH_KNOWN_HOSTS:?JEEB_STAGING_SSH_KNOWN_HOSTS is required}"
+          [ "${#CLOUDFLARE_API_TOKEN}" -ge 20 ]
+
+      - name: Install pinned cloudflared and configure strict SSH
+        env:
+          SSH_HOST: ${{ secrets.JEEB_STAGING_SSH_HOST }}
+          SSH_USER: ${{ secrets.JEEB_STAGING_DEPLOY_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.JEEB_STAGING_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.JEEB_STAGING_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          package=$RUNNER_TEMP/cloudflared-linux-amd64.deb
+          curl -fsSL --retry 3 -o "$package" \
+            https://github.com/cloudflare/cloudflared/releases/download/2026.8.2/cloudflared-linux-amd64.deb
+          printf '%s  %s\n' \
+            c805c7c8102190c04dfc16e3b4cc4acc9007d5b19b3afbcd608ea6fed7645a43 \
+            "$package" | sha256sum --check --status
+          sudo dpkg -i "$package"
+
+          install -d -m 700 "$HOME/.ssh"
+          if printf '%s' "$SSH_PRIVATE_KEY" | grep -q '^-----BEGIN'; then
+            printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          else
+            printf '%s' "$SSH_PRIVATE_KEY" \
+              | base64 --decode > "$HOME/.ssh/id_ed25519"
+          fi
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$SSH_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null || {
+            echo '::error::Known-hosts secret does not pin the staging SSH host.'
+            exit 1
+          }
+          {
+            printf '%s\n' 'Host jeeb-staging'
+            printf '  HostName %s\n' "$SSH_HOST"
+            printf '  User %s\n' "$SSH_USER"
+            printf '%s\n' \
+              '  IdentityFile ~/.ssh/id_ed25519' \
+              '  ProxyCommand cloudflared access ssh --hostname %h' \
+              '  UserKnownHostsFile ~/.ssh/known_hosts' \
+              '  StrictHostKeyChecking yes'
+          } > "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
+
+      - name: Assert exact host and healthy incumbent edge
+        run: |
+          set -euo pipefail
+          ssh jeeb-staging 'set -eu
+            [ "$(hostname -s)" = olivium-ephemerals ]
+            ip -4 -o addr show scope global \
+              | awk '\''{ split($4, address, "/"); print address[1] }'\'' \
+              | grep -Fxq 192.168.2.20
+            sudo test -f /etc/nginx/sites-available/jeeb-direct-tls.conf
+            sudo nginx -t
+            sudo systemctl is-active --quiet nginx
+            sudo systemctl is-active --quiet cloudflared-jeeb-staging
+            docker service inspect jeeb-staging-realtime-comunication-service \
+              --format "{{.Spec.EndpointSpec.Ports}}" | grep -Fq 10069'
+
+      - name: Capture the exact incumbent Worker version
+        id: worker-incumbent
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          status_file=$RUNNER_TEMP/worker-status.json
+          npx --yes "wrangler@$WRANGLER_VERSION" deployments status --json \
+            --config "$WRANGLER_CONFIG" > "$status_file"
+          incumbent=$(jq -er "
+            (if type == \"array\" then .[0] else . end) as \$deployment
+            | (\$deployment.versions
+                // \$deployment.deployment.versions
+                // \$deployment.result.versions
+                // empty)
+            | map(select((.percentage // 100) == 100))
+            | select(length == 1)
+            | (.[0].version_id // .[0].id)
+          " "$status_file")
+          [[ "$incumbent" =~ ^[0-9a-f-]{32,64}$ ]]
+          printf 'version=%s\n' "$incumbent" >> "$GITHUB_OUTPUT"
+
+      - name: Stage immutable origin candidates
+        run: |
+          set -euo pipefail
+          # The validated run-scoped path expands on the runner.
+          # shellcheck disable=SC2029
+          ssh jeeb-staging \
+            "install -d -m 700 \"\$HOME/.jeeb-edge-deploy\" \"\$HOME/$REMOTE_STAGE\""
+          scp deploy/staging/nginx/jeeb-direct-tls.conf \
+            jeeb-staging:"$REMOTE_STAGE/jeeb-direct-tls.conf"
+          scp deploy/staging/well-known/apple-app-site-association \
+            jeeb-staging:"$REMOTE_STAGE/apple-app-site-association"
+          scp deploy/staging/well-known/assetlinks.json \
+            jeeb-staging:"$REMOTE_STAGE/assetlinks.json"
+          scp deploy/staging/scripts/edge-origin-rollout.sh \
+            jeeb-staging:"$REMOTE_STAGE/edge-origin-rollout.sh"
+
+      - name: Apply nginx and association documents atomically
+        id: origin
+        run: |
+          set -euo pipefail
+          # Remote HOME expands on the target; run/commit identifiers expand locally.
+          # shellcheck disable=SC2029
+          ssh jeeb-staging sudo bash \
+            "\$HOME/$REMOTE_STAGE/edge-origin-rollout.sh" \
+            apply "$EDGE_RUN_KEY" "$GITHUB_SHA" "\$HOME/$REMOTE_STAGE"
+
+      - name: Deploy the commit-identified Worker version
+        id: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes "wrangler@$WRANGLER_VERSION" deploy \
+            --config "$WRANGLER_CONFIG" \
+            --tag "$GITHUB_SHA" \
+            --message "git:$GITHUB_SHA" \
+            --keep-vars \
+            --strict
+
+      - name: Verify public HTTPS, association identities, and WSS routing
+        id: public-verify
+        run: |
+          set -euo pipefail
+          attempts=0
+          until [ "$attempts" -ge 12 ]; do
+            attempts=$((attempts + 1))
+            if curl -fsS --connect-timeout 5 --max-time 10 \
+              https://app.jeeb.fds-1.com/__tunnel_health >/dev/null; then
+              break
+            fi
+            sleep "$attempts"
+          done
+          [ "$attempts" -lt 12 ]
+
+          response_headers=$RUNNER_TEMP/response-headers
+          response_body=$RUNNER_TEMP/response-body
+          curl -sS --connect-timeout 5 --max-time 10 \
+            -D "$response_headers" -o "$response_body" \
+            http://app.jeeb.fds-1.com/health/ready
+          grep -Eq '^HTTP/[0-9.]+ (301|308) ' "$response_headers"
+          grep -Eiq '^location: https://app\.jeeb\.fds-1\.com/health/ready\r?$' \
+            "$response_headers"
+
+          for document in apple-app-site-association assetlinks.json; do
+            curl -fsS --compressed --connect-timeout 5 --max-time 10 \
+              -D "$response_headers" \
+              -o "$response_body" \
+              "https://app.jeeb.fds-1.com/.well-known/$document"
+            grep -Eq '^HTTP/[0-9.]+ 200 ' "$response_headers"
+            grep -Eiq '^content-type: application/json([; ]|\r?$)' \
+              "$response_headers"
+            cmp "deploy/staging/well-known/$document" "$response_body"
+          done
+
+          websocket_key=$(printf '%s' 'the sample nonce' | base64 -w 0)
+          curl -sS --http1.1 --connect-timeout 5 --max-time 10 \
+            -D "$response_headers" -o "$response_body" \
+            -H 'Connection: Upgrade' \
+            -H 'Upgrade: websocket' \
+            -H 'Sec-WebSocket-Version: 13' \
+            -H "Sec-WebSocket-Key: $websocket_key" \
+            'https://app.jeeb.fds-1.com/socket/websocket?vsn=2.0.0'
+          wss_status=$(awk '/^HTTP\// { code=$2 } END { print code }' \
+            "$response_headers")
+          case "$wss_status" in 401|403) ;; *) exit 41 ;; esac
+          if grep -Eiq '^content-type: application/problem\+json' "$response_headers" \
+            || grep -Eiq '^www-authenticate: Bearer' "$response_headers" \
+            || grep -Eiq '^x-correlation-id:' "$response_headers"; then
+            echo '::error::The WebSocket request still reached ASP.NET gateway auth.'
+            exit 42
+          fi
+
+      - name: Record the active Worker version and finalize origin state
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          INCUMBENT_WORKER_VERSION: ${{ steps.worker-incumbent.outputs.version }}
+        run: |
+          set -euo pipefail
+          status_file=$RUNNER_TEMP/worker-active.json
+          npx --yes "wrangler@$WRANGLER_VERSION" deployments status --json \
+            --config "$WRANGLER_CONFIG" > "$status_file"
+          active=$(jq -er "
+            (if type == \"array\" then .[0] else . end) as \$deployment
+            | (\$deployment.versions
+                // \$deployment.deployment.versions
+                // \$deployment.result.versions
+                // empty)
+            | map(select((.percentage // 100) == 100))
+            | select(length == 1)
+            | (.[0].version_id // .[0].id)
+          " "$status_file")
+          [[ "$active" =~ ^[0-9a-f-]{32,64}$ ]]
+          # Remote HOME expands on the target; run/commit identifiers expand locally.
+          # shellcheck disable=SC2029
+          ssh jeeb-staging sudo bash \
+            "\$HOME/$REMOTE_STAGE/edge-origin-rollout.sh" \
+            finalize "$EDGE_RUN_KEY" "$GITHUB_SHA" "\$HOME/$REMOTE_STAGE"
+          {
+            printf '### Jeeb staging edge deployment\n\n'
+            printf -- "- Git commit: \`%s\`\n" "$GITHUB_SHA"
+            printf -- "- Worker version: \`%s\`\n" "$active"
+            printf -- "- Previous Worker version: \`%s\`\n" \
+              "$INCUMBENT_WORKER_VERSION"
+            printf -- '- nginx origin state: verified\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore Worker and origin after any failed live gate
+        if: ${{ failure() && steps.origin.outcome == 'success' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          INCUMBENT_WORKER_VERSION: ${{ steps.worker-incumbent.outputs.version }}
+        run: |
+          set -euo pipefail
+          npx --yes "wrangler@$WRANGLER_VERSION" rollback \
+            "$INCUMBENT_WORKER_VERSION" \
+            --config "$WRANGLER_CONFIG" \
+            --message "automatic restoration after failed git:$GITHUB_SHA" \
+            --yes
+          # Remote HOME expands on the target; run/commit identifiers expand locally.
+          # shellcheck disable=SC2029
+          ssh jeeb-staging sudo bash \
+            "\$HOME/$REMOTE_STAGE/edge-origin-rollout.sh" \
+            rollback "$EDGE_RUN_KEY" "$GITHUB_SHA" "\$HOME/$REMOTE_STAGE"
+          echo '::error::Live edge verification failed; Worker and nginx were restored.'
+          exit 1
+
+      - name: Clean exact remote candidate directory
+        if: always()
+        run: |
+          set -euo pipefail
+          ssh jeeb-staging bash -s -- "$REMOTE_STAGE" <<'REMOTE'
+          set -eu
+          candidate=$1
+          case "$candidate" in
+            .jeeb-edge-deploy/[0-9]*_[0-9]*) ;;
+            *) exit 65 ;;
+          esac
+          rm -rf -- "$HOME/$candidate"
+          REMOTE

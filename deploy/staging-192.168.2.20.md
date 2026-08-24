@@ -30,9 +30,11 @@ The detailed data-operation record and verification evidence are in
 - Images: immutable Git-SHA tags in GHCR.
 - Update policy: stop-first with fail-closed health gates and bounded CPU,
   memory, and JSON log rotation.
-- Failure policy: pause the failed rollout in place. Do not perform an
-  automatic or manual deployment reversion; correct the fault and dispatch a fresh run from
-  the corrected immutable commit.
+- Failure policy: single-replica host-mode services update stop-first with
+  automatic rollback and rollback-order stop-first. Preserve and verify the
+  incumbent digest before mutation. The staging edge separately restores the
+  exact incumbent Worker version and nginx configuration when any public live
+  gate fails.
 
 The workflow rejects a target unless both the hostname and `192.168.2.20` are
 present. GitHub-hosted runners reach SSH through Cloudflare Access using a
@@ -264,10 +266,9 @@ masked-call is local-only, and catalog is empty.
    dependency.
 5. Dispatch `jeeb-gateway` last, then verify its readiness endpoint through
    loopback and public HTTPS.
-6. On failure, inspect the Actions run and `docker service logs`; do not bypass
-   the health gate and do not replace it with an older image. Leave the
-   rollout paused, correct configuration or code, publish it, and make a fresh
-   dispatch so the run uses the corrected immutable commit.
+6. On failure, confirm the workflow restored the recorded incumbent digest or
+   edge version, inspect the Actions run and service logs, correct the fault,
+   and dispatch a fresh immutable commit. Never bypass the health gate.
 
 Useful non-secret checks:
 

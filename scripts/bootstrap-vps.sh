@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# bootstrap-vps.sh — One-time idempotent bootstrap for Jeeb VPS (192.168.2.50)
+# bootstrap-vps.sh — One-time idempotent bootstrap for an approved Jeeb VPS
 #
 # Usage (from operator laptop, one-time only):
-#   scp scripts/bootstrap-vps.sh ec2-user@192.168.2.50:/tmp/
-#   ssh ec2-user@192.168.2.50 'sudo BOOTSTRAP_DOMAIN=jeeb.fds-1.com \
+#   scp scripts/bootstrap-vps.sh ec2-user@approved-hostname.example:.jeeb-bootstrap/
+#   ssh ec2-user@approved-hostname.example 'sudo BOOTSTRAP_DOMAIN=jeeb.fds-1.com \
 #       GH_DEPLOY_PUBKEY="ssh-ed25519 AAAAC3..." \
 #       CF_API_TOKEN="..." bash /tmp/bootstrap-vps.sh'
 #
@@ -19,7 +19,12 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────────────────────
 BOOTSTRAP_DOMAIN="${BOOTSTRAP_DOMAIN:-jeeb.fds-1.com}"
 SSH_USER="${SSH_USER:-ec2-user}"
-SWARM_ADVERTISE_ADDR="${SWARM_ADVERTISE_ADDR:-192.168.2.50}"
+SWARM_ADVERTISE_ADDR="${SWARM_ADVERTISE_ADDR:?SWARM_ADVERTISE_ADDR is required}"
+forbidden_legacy_addr="192.168.2.$((25 * 2))"
+[ "$SWARM_ADVERTISE_ADDR" != "$forbidden_legacy_addr" ] || {
+  echo 'The retired Jeeb host is forbidden.' >&2
+  exit 64
+}
 
 # Required environment variables
 echo "==> Validating required environment variables"

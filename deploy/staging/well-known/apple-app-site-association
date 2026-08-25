@@ -1,0 +1,23 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": [
+          "K5RDQ8J7AN.com.olivium.jeeb"
+        ],
+        "components": [
+          { "/": "/orders/*" },
+          { "/": "/chat/*" },
+          { "/": "/wallet/*" },
+          { "/": "/disputes/*" },
+          { "/": "/requests/*" },
+          { "/": "/jeeber/*" },
+          { "/": "/earnings/*" },
+          { "/": "/notifications/*" },
+          { "/": "/profile/*" },
+          { "/": "/settings/*" }
+        ]
+      }
+    ]
+  }
+}

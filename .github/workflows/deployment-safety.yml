@@ -1,0 +1,17 @@
+name: Deployment safety contract
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Verify owner block and forward-only deployment authority
+        run: python3 scripts/check-deployment-safety-policy.py

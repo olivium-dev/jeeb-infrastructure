@@ -3,17 +3,23 @@ name: Staging edge contract
 on:
   pull_request:
     paths:
+      - '.github/workflows/deployment-safety.yml'
+      - '.github/workflows/jeeb-staging-edge-deploy.yml'
       - '.github/workflows/staging-edge-contract.yml'
       - 'deploy/msi/jeeb-cms/**'
       - 'deploy/staging/**'
       - 'deploy/staging-192.168.2.20.md'
+      - 'scripts/check-deployment-safety-policy.py'
   push:
     branches: [main]
     paths:
+      - '.github/workflows/deployment-safety.yml'
+      - '.github/workflows/jeeb-staging-edge-deploy.yml'
       - '.github/workflows/staging-edge-contract.yml'
       - 'deploy/msi/jeeb-cms/**'
       - 'deploy/staging/**'
       - 'deploy/staging-192.168.2.20.md'
+      - 'scripts/check-deployment-safety-policy.py'
 
 permissions:
   contents: read
@@ -22,16 +28,19 @@ jobs:
   contract:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
-          node-version: '22'
+          node-version: '22.18.0'
       - name: Verify staging edge configuration
         run: |
           set -euo pipefail
           python3 -m unittest discover -s deploy/staging/tests -p 'test_*.py' -v
           node --check deploy/staging/cloudflare/jeeb-staging-router.mjs
-          npx --yes wrangler@4.120.0 deploy --dry-run \
+          node --check deploy/staging/scripts/verify-authorized-wss.mjs
+          bash -n deploy/staging/scripts/edge-origin-rollout.sh
+          python3 scripts/check-deployment-safety-policy.py
+          npx --yes wrangler@4.120.0 versions upload --dry-run \
             --config deploy/staging/cloudflare/wrangler.toml \
             --outdir /tmp/jeeb-staging-worker-dry-run
           sh -n deploy/staging/letsencrypt/renewal-hooks/deploy/jeeb-nginx

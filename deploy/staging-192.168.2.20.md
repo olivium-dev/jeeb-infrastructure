@@ -9,9 +9,11 @@ block approved staging deployments to this host.
 
 The environment was last fully validated on 2026-08-19 after datastore
 isolation, fleet deployment, public ingress validation, and a staging-only
-user-data cleanup. The public Super Login Plus roster intentionally contains
-only Nour and Karim. CMS administrator authentication is a separate control;
-there is no corresponding `Admin` row in the user-management database.
+user-data cleanup. That cleanup retained Nour and Karim as ordinary application
+users. Super Login Plus is retired and its public roster endpoint must return
+404; it is not an authentication path or a release gate. CMS administrator
+authentication is a separate control; there is no corresponding `Admin` row in
+the user-management database.
 
 The detailed data-operation record and verification evidence are in
 [`docs/staging-data-baseline-2026-08-19.md`](../docs/staging-data-baseline-2026-08-19.md).
@@ -30,9 +32,10 @@ The detailed data-operation record and verification evidence are in
 - Images: immutable Git-SHA tags in GHCR.
 - Update policy: stop-first with fail-closed health gates and bounded CPU,
   memory, and JSON log rotation.
-- Failure policy: pause the failed rollout in place. Do not perform an
-  automatic or manual deployment reversion; correct the fault and dispatch a fresh run from
-  the corrected immutable commit.
+- Failure policy: single-replica host-mode services update stop-first with
+  automatic rollback and rollback-order stop-first. Preserve and verify the
+  incumbent digest before mutation. The staging edge is separately owner-blocked
+  and performs no Worker, nginx, origin, SSH, or provider action.
 
 The workflow rejects a target unless both the hostname and `192.168.2.20` are
 present. GitHub-hosted runners reach SSH through Cloudflare Access using a
@@ -46,10 +49,22 @@ The locally managed tunnel `jeeb-staging-192-168-2-20` is run by the enabled
 systemd unit `cloudflared-jeeb-staging.service`. It follows the same tunnel
 pattern as the other working servers; no router port forwarding is required.
 
+The public Cloudflare edge must apply a hostname-scoped minimum-TLS rule to
+`app.jeeb.fds-1.com` and `cms.jeeb.fds-1.com` that rejects TLS 1.0 and 1.1.
+Do not change the zone-wide TLS floor: unrelated `fds-1.com` products are out of
+scope. The edge workflow independently handshakes both hosts and fails before
+finalization unless legacy TLS is rejected and TLS 1.2 succeeds. It also proves
+HTTP 308 redirects on both public hosts with the path and query preserved.
+
 - Worker `jeeb-staging-host-router` owns the exact Custom Domains
   `app.jeeb.fds-1.com` and `cms.jeeb.fds-1.com` and injects a runtime origin key.
 - The Worker maps those names to the proxied tunnel-only hostnames
   `jeeb-app-origin.fds-1.com` and `jeeb-cms-origin.fds-1.com` respectively.
+- Edge releases use `wrangler versions upload` followed by an exact version-ID
+  deployment. Those commands do not mutate Worker triggers. Before any origin
+  mutation, the workflow captures the immutable IDs and service/zone bindings
+  for exactly those two Custom Domains; candidate and final verification both
+  require the association snapshot to remain byte-for-byte unchanged.
 - `cloudflared` forwards both hidden hostnames to nginx TLS on loopback, using
   the corresponding public hostname for certificate and HTTP Host validation.
 - TCP/SSH remains at `jeeb-staging-ssh.fds-1.com` and routes to the server SSH
@@ -73,7 +88,9 @@ nginx listens for HTTPS only on `127.0.0.1` and `::1`, and rejects requests
 that do not carry the Worker's origin key. The matching key exists only as a
 Worker secret and in root-owned `/etc/nginx/jeeb-origin-key.map`; it must never
 be committed. The gateway is published on host port `10000` behind the app
-virtual host. The CMS virtual host proxies the LAN-only MSI origin at
+virtual host, including the exact `/socket/websocket` edge route. The gateway
+then proxies that upgrade to realtime over the encrypted staging overlay; nginx
+must never dial realtime's host port directly. The CMS virtual host proxies the LAN-only MSI origin at
 `192.168.2.39`, while its private callback paths fail closed. Microservice host
 ports remain staging-LAN services. A callback relay on `10090` is restricted by
 UFW to the local Docker gateway subnet and forwards the exact case callback
@@ -95,8 +112,9 @@ sudo install -o root -g root -m 0755 \
   /etc/letsencrypt/renewal-hooks/deploy/jeeb-nginx
 sudo cloudflared --config /etc/cloudflared-jeeb-staging/config.yml \
   tunnel ingress validate
-sudo nginx -t
-sudo systemctl restart cloudflared-jeeb-staging nginx
+sudo nginx -T >/tmp/jeeb-nginx-rendered.conf
+sudo nginx -t && sudo systemctl reload nginx
+sudo systemctl restart cloudflared-jeeb-staging
 ```
 
 The gateway staging workflow derives the exact `docker_gwbridge` gateway used
@@ -130,13 +148,49 @@ workflow or source file. The fleet uses the following secret names as needed:
   a dedicated staging user and update this contract in the same change.
 - Redis: `JEEB_REDIS_URL`, `HEARTBEAT_REDIS_URL`.
 - Identity and application: `JEEB_JWT_SIGNING_KEY`, `JEEB_JWT_ISSUER`,
-  `JEEB_SUPERADMIN_PASSCODE`, `JEEB_PHONE_HASH_PEPPER`,
-  `JEEB_FIREBASE_JSON`, `CASE_GATEWAY_CALLBACK_URL`.
+  `JEEB_PHONE_HASH_PEPPER`, `JEEB_FIREBASE_JSON`,
+  `CASE_GATEWAY_CALLBACK_URL`.
+- Authorized edge probe: `JEEB_STAGING_WSS_PROBE_MINT_KEY`, selected only for
+  `jeeb-gateway` and `jeeb-infrastructure`. It is a distinct random value of at
+  least 32 bytes and is never a JWT/Guardian/membership-ticket signing key.
 
 `JEEB_FIREBASE_JSON` may be stored as raw service-account JSON or base64. The
 workflow validates and normalizes it without logging it, then creates a
 service-specific Docker config. No secret value should appear in this runbook,
 workflow logs, commits, or shell history.
+
+### Authorized realtime edge-probe contract
+
+The edge workflow must prove a real public Phoenix connection; an anonymous
+401/403 is only a negative route check and can never make the deployment green.
+The gateway therefore owns a staging-only descriptor mint at
+`POST /internal/ops/staging/realtime-probe-descriptor` with this exact contract:
+
+- Require `X-Jeeb-Staging-Probe-Timestamp`,
+  `X-Jeeb-Staging-Probe-Nonce`, and
+  `X-Jeeb-Staging-Probe-Signature`. The signature is lowercase hex
+  HMAC-SHA256 over
+  `v1\nPOST\n/internal/ops/staging/realtime-probe-descriptor\n<TIMESTAMP>\n<NONCE>`
+  using `JEEB_STAGING_WSS_PROBE_MINT_KEY`.
+- Accept only a valid UUID nonce within 60 seconds, reject replay, expose the
+  route only in staging, and never accept the probe key as a bearer or signing
+  key for another surface.
+- Return a complete, short-lived descriptor for the non-privileged `client`
+  principal and the reserved, nonce-bound conversation
+  `edge-probe-<NONCE>` / topic `jeeb:chat:edge-probe-<NONCE>`. It must contain
+  `conversationId`, `topic`, `roleInConvo`, `socketUrl`, `token`, `ticket`, and
+  `expiresAt`; no real conversation or customer data is read or written.
+- The workflow requires the exact public socket URL, a 30-to-900-second
+  remaining lifetime, an actual WSS 101 upgrade, a successful Phoenix
+  heartbeat, a successful exact-topic join, and denial of the same join with a
+  deliberately forged membership ticket. The unauthenticated near miss must
+  also return `X-Jeeb-Realtime-Proxy: gateway`, proving nginx did not bypass the
+  gateway. Tokens and tickets are never logged.
+
+Until both the gateway endpoint and the matching environment secret exist, the
+edge deployment is intentionally fail-closed. A generic 401/403, a direct
+realtime token minter, or a long-lived user session is not an acceptable
+substitute.
 
 ## Staging datastore isolation
 
@@ -264,10 +318,29 @@ masked-call is local-only, and catalog is empty.
    dependency.
 5. Dispatch `jeeb-gateway` last, then verify its readiness endpoint through
    loopback and public HTTPS.
-6. On failure, inspect the Actions run and `docker service logs`; do not bypass
-   the health gate and do not replace it with an older image. Leave the
-   rollout paused, correct configuration or code, publish it, and make a fresh
-   dispatch so the run uses the corrected immutable commit.
+6. On failure, treat the release as explicitly red, inspect the reported active
+   state and logs, correct the fault in a new immutable commit, and obtain owner
+   approval before another dispatch. Never bypass the health gate.
+
+### Owner-blocked forward-only edge deployment
+
+The owner has prohibited silent failure through automatic recovery. The manual
+edge workflow therefore stops in a separate prerequisite job with a loud
+`OWNER BLOCK` before checkout, secret access, Cloudflare or Worker calls, SSH,
+nginx/origin apply, or any other provider action. The deployment job cannot run
+while that prerequisite is red.
+
+No automatic Worker or origin rollback, restoration command, failure trap, or
+failure-time cleanup remains. The dormant forward path still captures the exact
+incumbent Worker/Custom Domain state and nginx/association snapshot for audit,
+uses immutable Worker upload and exact-version promotion, serializes origin
+changes with a lock, and performs the real HTTPS, association, CMS, and
+authorized-WSS gates. The snapshot has no executable restore path.
+
+Enabling deployment requires an explicit owner-approved forward-only failure
+policy. Until then, do not remove or bypass the prerequisite block. A future
+failure must remain visible and must be corrected by a newly reviewed immutable
+commit; it must not trigger an automatic provider or origin mutation.
 
 Useful non-secret checks:
 
@@ -287,7 +360,8 @@ Expected post-cleanup results:
 - All 24 active `jeeb-staging-*` Swarm services report `1/1`; the intentionally
   disabled `jeeb-staging-notification-candidate` reports `0/0`.
 - `https://cms.jeeb.fds-1.com/` returns HTTP 200.
-- `GET /api/User/super-login/users` returns exactly Nour and Karim.
+- `GET /api/User/demo-users` and `GET /api/User/super-login/users` both return
+  404; neither debug-login surface is part of staging authentication.
 - A token minted for either retained user with explicit `customer` and
   `driver` roles can call `GET /v1/users/me` successfully.
 

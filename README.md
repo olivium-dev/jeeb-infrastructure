@@ -9,7 +9,7 @@ Deployment infrastructure for the Jeeb platform using Docker Swarm + nginx on ho
 │  GitHub Actions Runner                                                      │
 │  ┌──────────────────┐    cloudflared access tcp    ┌──────────────────┐    │
 │  │ Build & Push    │ ──────────────────────────▶ │ Jeeb VPS         │    │
-│  │ GHCR Image      │    (SSH over CF Tunnel)      │ 192.168.2.50     │    │
+│  │ GHCR Image      │    (SSH over CF Tunnel)      │ approved VPS     │    │
 │  └──────────────────┘                             └──────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
                                                             │
@@ -77,7 +77,8 @@ curl http://localhost:5000/health/live
 | `deploy-static-pages.yml` | Push to `static-pages/**` | Deploy static HTML/assets |
 | `update-ssl-certificate.yml` | Schedule 2× daily | Renew Let's Encrypt certs via DNS-01 |
 | `verify-server.yml` | Schedule daily + manual | Diagnostic: Swarm, nginx, SSL, cloudflared status |
-| `no-deployment-reversion.yml` | PR + push to `main` | Enforce repository-wide forward-only policy |
+| `jeeb-staging-edge-deploy.yml` | Manual, default branch only | Owner-blocked forward-only edge definition; performs no provider or origin action while blocked |
+| `deployment-safety.yml` | PR + push to `main` | Enforce the owner block, strict edge access, forward-only execution, and health gates |
 
 ### Service Deploy Workflows (jeeb-gateway, etc.)
 
@@ -111,7 +112,8 @@ jeeb-infrastructure/
 │       ├── deploy-static-pages.yml # Static assets deploy
 │       ├── update-ssl-certificate.yml # Certbot renewal
 │       ├── verify-server.yml       # Diagnostic checks
-│       └── no-deployment-reversion.yml # Forward-only policy gate
+│       ├── jeeb-staging-edge-deploy.yml # Owner-blocked forward-only edge definition
+│       └── deployment-safety.yml    # Deployment safety policy gate
 ├── legacy-compose/                 # PREVIOUS: Docker Compose + Traefik
 │   ├── docker-compose*.yml         # (Local dev only — not production)
 │   ├── deploy/*.sh                 # (Old deploy scripts)
@@ -133,6 +135,12 @@ Configure these via `gh secret set`:
 | `JEEB_SSH_HOST` | Cloudflare tunnel hostname: `ssh.jeeb.fds-1.com` |
 | `JEEB_DEPLOY_USER` | SSH user: `ec2-user` |
 | `CF_API_TOKEN` | Cloudflare API token (for certbot DNS-01) |
+| `JEEB_STAGING_SSH_PRIVATE_KEY` | Dedicated staging ed25519 key |
+| `JEEB_STAGING_SSH_HOST` | Pinned staging Cloudflare SSH hostname |
+| `JEEB_STAGING_DEPLOY_USER` | Staging deployment user |
+| `JEEB_STAGING_SSH_KNOWN_HOSTS` | Exact staging SSH host-key entry |
+| `CLOUDFLARE_API_TOKEN` | Scoped token for the staging Worker and Custom Domains |
+| `JEEB_STAGING_WSS_PROBE_MINT_KEY` | Staging-only HMAC key for minting a nonce-bound, non-privileged realtime probe descriptor |
 
 ### For Production Environment
 
@@ -157,17 +165,21 @@ ssh-keygen -t ed25519 -f ./jeeb-deploy-key -N "" -C "jeeb-gh-actions"
 
 ```bash
 # From your laptop, while on the same network as the VPS
-scp scripts/bootstrap-vps.sh ec2-user@192.168.2.50:/tmp/
+JEEB_BOOTSTRAP_HOST=approved-hostname.example
+ssh "ec2-user@$JEEB_BOOTSTRAP_HOST" 'install -d -m 700 .jeeb-bootstrap'
+scp scripts/bootstrap-vps.sh \
+  "ec2-user@$JEEB_BOOTSTRAP_HOST:.jeeb-bootstrap/bootstrap-vps.sh"
 ```
 
 ### 3. Run Bootstrap (on VPS)
 
 ```bash
-ssh ec2-user@192.168.2.50 'sudo \
+ssh "ec2-user@$JEEB_BOOTSTRAP_HOST" 'sudo \
   BOOTSTRAP_DOMAIN=jeeb.fds-1.com \
   GH_DEPLOY_PUBKEY="ssh-ed25519 AAAAC3..." \
   CF_API_TOKEN="your-cloudflare-token" \
-  bash /tmp/bootstrap-vps.sh'
+  SWARM_ADVERTISE_ADDR="approved-private-address" \
+  bash .jeeb-bootstrap/bootstrap-vps.sh'
 ```
 
 The bootstrap script:
@@ -182,7 +194,7 @@ The bootstrap script:
 
 ```bash
 # SSH to VPS (via lab network or after bootstrap)
-ssh ec2-user@192.168.2.50
+ssh "ec2-user@$JEEB_BOOTSTRAP_HOST"
 
 # Login and create tunnels
 cloudflared tunnel login
@@ -206,7 +218,7 @@ sudo systemctl start cloudflare-http-tunnel cloudflare-ssh-tunnel
 ### 5. Obtain SSL Certificate
 
 ```bash
-ssh ec2-user@192.168.2.50
+ssh "ec2-user@$JEEB_BOOTSTRAP_HOST"
 sudo certbot certonly --dns-cloudflare \
   --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
   -d jeeb.fds-1.com -d '*.jeeb.fds-1.com' \

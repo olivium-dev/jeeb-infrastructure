@@ -16,6 +16,18 @@ export default {
       });
     }
 
+    if (upstream.protocol !== "https:") {
+      upstream.protocol = "https:";
+      upstream.hostname = publicHostname;
+      return new Response(null, {
+        status: 308,
+        headers: {
+          location: upstream.toString(),
+          "cache-control": "no-store",
+        },
+      });
+    }
+
     upstream.hostname = originHostname;
 
     const headers = new Headers(request.headers);

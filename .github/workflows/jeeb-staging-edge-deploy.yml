@@ -236,8 +236,7 @@ jobs:
             --config "$WRANGLER_CONFIG" \
             --tag "$worker_tag" \
             --message "git:$GITHUB_SHA" \
-            --keep-vars \
-            --strict
+            --keep-vars
           candidate=$(jq -s -er '
             [.[] | select(.type == "version-upload")] | last | .version_id
           ' "$WRANGLER_OUTPUT_FILE_PATH")

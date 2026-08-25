@@ -309,9 +309,10 @@ jobs:
                 -D "$response_headers" -o "$response_body" \
                 -w '%{http_code} %{time_total}' "$url"); then
                 read -r code elapsed <<< "$result"
-                if [ "$code" = 200 ]; then
-                  grep -Eiq '^strict-transport-security: max-age=31536000\r?$' \
-                    "$response_headers"
+                if [ "$code" = 200 ] \
+                  && grep -Eiq \
+                    '^strict-transport-security: max-age=31536000\r?$' \
+                    "$response_headers"; then
                   printf '%s status=%s response_seconds=%s attempt=%s\n' \
                     "$label" "$code" "$elapsed" "$attempt"
                   return 0
@@ -319,7 +320,7 @@ jobs:
               fi
               sleep 2
             done
-            echo "::error::$label did not return HTTPS 200 within 60 seconds"
+            echo "::error::$label did not return HTTPS 200 with required HSTS within 60 seconds"
             return 1
           }
 

@@ -246,6 +246,12 @@ class DirectTlsContractTests(unittest.TestCase):
 
     def test_public_gate_records_legacy_tls_and_checks_both_redirects(self) -> None:
         workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            'if [ "$code" = 200 ] \\\n'
+            "                  && grep -Eiq",
+            workflow,
+        )
+        self.assertIn("HTTPS 200 with required HSTS within 60 seconds", workflow)
         self.assertIn("verify_public_tls_floor()", workflow)
         self.assertIn("-min_protocol \"$protocol\"", workflow)
         self.assertIn("-max_protocol \"$protocol\"", workflow)

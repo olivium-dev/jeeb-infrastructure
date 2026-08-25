@@ -365,11 +365,16 @@ sudo install -o root -g root -m 0440 \
 ```
 
 This does not grant passwordless root shell access. It permits only the exact
-read-only nginx/service checks and the root-owned helper's `apply` and
-`finalize` modes. The workflow verifies the helper owner, mode, and SHA-256
-against its checked-out source before any origin or Worker mutation. A helper
-source change therefore requires a new reviewed install; never stream a script
-into `sudo bash` or weaken the policy to unrestricted `NOPASSWD`.
+read-only `nginx -T`/`nginx -t` and service checks, plus the root-owned helper's
+`apply` and `finalize` modes. The workflow verifies the helper owner, mode, and
+SHA-256 against its checked-out source before any origin or Worker mutation. A
+helper source change therefore requires a new reviewed install; never stream a
+script into `sudo bash` or weaken the policy to unrestricted `NOPASSWD`.
+
+Immediately before `nginx -t && systemctl reload nginx`, the helper runs
+`nginx -T` and retains only the SHA-256 of the rendered configuration in the
+root-only rollout evidence directory. This proves the read-only dump occurred
+without putting included secret material in CI output or an audit artifact.
 
 Useful non-secret checks:
 

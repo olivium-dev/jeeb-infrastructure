@@ -67,6 +67,19 @@ class EdgeOriginForwardOnlyTests(unittest.TestCase):
         self.assertIn("write_status verified", self.source)
         self.assertIn('[ "$(read_status)" = applied ]', self.source)
 
+    def test_rendered_candidate_is_captured_before_test_and_reload(self) -> None:
+        rendered = self.source.index(
+            'nginx -T | sha256sum > "$state_dir/nginx-rendered-candidate.sha256"'
+        )
+        tested = self.source.index("nginx -t", rendered)
+        reloaded = self.source.index("systemctl reload nginx", tested)
+        self.assertLess(rendered, tested)
+        self.assertLess(tested, reloaded)
+        self.assertIn(
+            'chmod 0600 "$state_dir/nginx-rendered-candidate.sha256"',
+            self.source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

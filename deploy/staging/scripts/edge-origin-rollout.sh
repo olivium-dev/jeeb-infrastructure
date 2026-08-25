@@ -199,6 +199,8 @@ case "$mode" in
     mv -f -- "$config.candidate-$run_key" "$config"
     ln -s -- "releases/$release_name" "$static_root/.current-$run_key"
     mv -Tf -- "$static_root/.current-$run_key" "$current_link"
+    nginx -T | sha256sum > "$state_dir/nginx-rendered-candidate.sha256"
+    chmod 0600 "$state_dir/nginx-rendered-candidate.sha256"
     nginx -t
     systemctl reload nginx
     systemctl is-active --quiet nginx

@@ -381,6 +381,7 @@ def main() -> int:
                 "ORIGIN_ROLLOUT_HELPER: /usr/local/sbin/jeeb-edge-origin-rollout",
                 "expected_rollout_sha=$(sha256sum",
                 "root:root:755",
+                "sudo -n /usr/sbin/nginx -T >/dev/null",
                 "sudo -n /usr/sbin/nginx -t",
                 'sudo -n "$ORIGIN_ROLLOUT_HELPER"',
             ),
@@ -403,6 +404,8 @@ def main() -> int:
                 "write_status verified",
                 "cmp -s -- \"$state_dir/jeeb-direct-tls.conf\" \"$config\"",
                 "The snapshot is retained for audit only.",
+                'nginx -T | sha256sum > "$state_dir/nginx-rendered-candidate.sha256"',
+                'chmod 0600 "$state_dir/nginx-rendered-candidate.sha256"',
                 "systemctl reload nginx",
                 "apply)",
                 "finalize)",
@@ -415,6 +418,7 @@ def main() -> int:
         require(
             sudoers,
             (
+                "/usr/sbin/nginx -T",
                 "/usr/sbin/nginx -t",
                 "/usr/bin/systemctl is-active --quiet nginx",
                 "/usr/bin/systemctl is-active --quiet cloudflared-jeeb-staging",

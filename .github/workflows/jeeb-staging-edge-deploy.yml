@@ -143,6 +143,7 @@ jobs:
           [ "$(stat -c '%U:%G:%a' "$rollout_helper")" = root:root:755 ]
           [ "$(sha256sum "$rollout_helper" | awk '{ print $1 }')" \
             = "$expected_rollout_sha" ]
+          sudo -n /usr/sbin/nginx -T >/dev/null
           sudo -n /usr/sbin/nginx -t
           sudo -n /usr/bin/systemctl is-active --quiet nginx
           sudo -n /usr/bin/systemctl is-active --quiet cloudflared-jeeb-staging

@@ -213,7 +213,7 @@ class DirectTlsContractTests(unittest.TestCase):
         self.assertIn('pattern = "cms.jeeb.fds-1.com"', config)
         self.assertNotIn("ORIGIN_KEY", config)
 
-    def test_public_gate_rejects_legacy_tls_and_checks_both_redirects(self) -> None:
+    def test_public_gate_records_legacy_tls_and_checks_both_redirects(self) -> None:
         workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("verify_public_tls_floor()", workflow)
         self.assertIn("-min_protocol \"$protocol\"", workflow)
@@ -225,8 +225,18 @@ class DirectTlsContractTests(unittest.TestCase):
                 f"verify_http_redirect {host} /edge-redirect-probe?source=release",
                 workflow,
             )
-        self.assertIn("Legacy TLS was accepted", workflow)
+        self.assertIn("Accepted staging TLS risk", workflow)
+        self.assertIn("policy=advisory", workflow)
+        self.assertIn("cloudflare-free-no-advanced-certificate-manager", workflow)
+        self.assertNotIn("::error::Legacy TLS was accepted", workflow)
+        legacy_probe = workflow.split("for protocol in TLSv1 TLSv1.1; do", 1)[1]
+        legacy_probe = legacy_probe.split(
+            "output=$RUNNER_TEMP/tls-${host//./-}-TLSv1-2", 1
+        )[0]
+        self.assertNotIn("return 1", legacy_probe)
+        self.assertNotIn("exit 1", legacy_probe)
         self.assertIn("Public TLS 1.2 was not accepted", workflow)
+        self.assertIn("protocol=TLSv1.2 result=accepted policy=hard", workflow)
         self.assertIn("^x-jeeb-realtime-proxy: gateway", workflow)
         self.assertNotIn("127.0.0.1:10069", workflow)
 

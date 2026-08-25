@@ -77,8 +77,8 @@ curl http://localhost:5000/health/live
 | `deploy-static-pages.yml` | Push to `static-pages/**` | Deploy static HTML/assets |
 | `update-ssl-certificate.yml` | Schedule 2× daily | Renew Let's Encrypt certs via DNS-01 |
 | `verify-server.yml` | Schedule daily + manual | Diagnostic: Swarm, nginx, SSL, cloudflared status |
-| `jeeb-staging-edge-deploy.yml` | Manual, default branch only | Owner-blocked forward-only edge definition; performs no provider or origin action while blocked |
-| `deployment-safety.yml` | PR + push to `main` | Enforce the owner block, strict edge access, forward-only execution, and health gates |
+| `jeeb-staging-edge-deploy.yml` | Manual, default branch only | Forward-only staging Worker/origin rollout with strict functional gates and retained audit snapshots |
+| `deployment-safety.yml` | PR + push to `main` | Enforce strict edge access, forward-only execution, and health gates |
 
 ### Service Deploy Workflows (jeeb-gateway, etc.)
 

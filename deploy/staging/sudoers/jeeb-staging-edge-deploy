@@ -1,6 +1,6 @@
 # Scoped non-interactive authority for the dedicated Jeeb staging edge workflow.
 # The rollout helper is root-owned, validates the exact host and arguments, and
 # supports only the forward apply/finalize modes.
-Cmnd_Alias JEEB_STAGING_EDGE_READ = /usr/sbin/nginx -t, /usr/bin/systemctl is-active --quiet nginx, /usr/bin/systemctl is-active --quiet cloudflared-jeeb-staging
+Cmnd_Alias JEEB_STAGING_EDGE_READ = /usr/sbin/nginx -T, /usr/sbin/nginx -t, /usr/bin/systemctl is-active --quiet nginx, /usr/bin/systemctl is-active --quiet cloudflared-jeeb-staging
 Cmnd_Alias JEEB_STAGING_EDGE_FORWARD = /usr/local/sbin/jeeb-edge-origin-rollout apply *, /usr/local/sbin/jeeb-edge-origin-rollout finalize *
 ec2-user ALL=(root) NOPASSWD: JEEB_STAGING_EDGE_READ, JEEB_STAGING_EDGE_FORWARD

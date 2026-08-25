@@ -311,7 +311,7 @@ jobs:
                 read -r code elapsed <<< "$result"
                 if [ "$code" = 200 ] \
                   && grep -Eiq \
-                    '^strict-transport-security: max-age=31536000\r?$' \
+                    '^strict-transport-security: max-age=31536000[[:space:]]*$' \
                     "$response_headers"; then
                   printf '%s status=%s response_seconds=%s attempt=%s\n' \
                     "$label" "$code" "$elapsed" "$attempt"
@@ -330,7 +330,7 @@ jobs:
             https://app.jeeb.fds-1.com/health/ready
           poll_https_200 cms-health \
             https://cms.jeeb.fds-1.com/healthz
-          grep -Eq '^healthy\r?$' "$response_body"
+          grep -Eq '^healthy[[:space:]]*$' "$response_body"
 
           verify_http_redirect() {
             local host=$1 path_and_query=$2 actual_location
@@ -390,9 +390,11 @@ jobs:
               -o "$response_body" \
               "https://app.jeeb.fds-1.com/.well-known/$document"
             grep -Eq '^HTTP/[0-9.]+ 200 ' "$response_headers"
-            grep -Eiq '^content-type: application/json([; ]|\r?$)' \
+            grep -Eiq \
+              '^content-type: application/json(;[^[:cntrl:]]*)?[[:space:]]*$' \
               "$response_headers"
-            grep -Eiq '^strict-transport-security: max-age=31536000\r?$' \
+            grep -Eiq \
+              '^strict-transport-security: max-age=31536000[[:space:]]*$' \
               "$response_headers"
             cmp "deploy/staging/well-known/$document" "$response_body"
           done
@@ -409,7 +411,8 @@ jobs:
           wss_status=$(awk '/^HTTP\// { code=$2 } END { print code }' \
             "$response_headers")
           case "$wss_status" in 401|403) ;; *) exit 41 ;; esac
-          if ! grep -Eiq '^x-jeeb-realtime-proxy: gateway\r?$' \
+          if ! grep -Eiq \
+            '^x-jeeb-realtime-proxy: gateway[[:space:]]*$' \
             "$response_headers"; then
             echo '::error::Unauthenticated WSS near miss did not traverse the gateway-owned proxy.'
             exit 42

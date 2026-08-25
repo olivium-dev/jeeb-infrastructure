@@ -252,6 +252,20 @@ class DirectTlsContractTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("HTTPS 200 with required HSTS within 60 seconds", workflow)
+        self.assertIn(
+            "^strict-transport-security: max-age=31536000[[:space:]]*$",
+            workflow,
+        )
+        self.assertIn("^healthy[[:space:]]*$", workflow)
+        self.assertIn(
+            "^content-type: application/json(;[^[:cntrl:]]*)?[[:space:]]*$",
+            workflow,
+        )
+        self.assertIn(
+            "^x-jeeb-realtime-proxy: gateway[[:space:]]*$",
+            workflow,
+        )
+        self.assertNotIn(r"\r?$", workflow)
         self.assertIn("verify_public_tls_floor()", workflow)
         self.assertIn("-min_protocol \"$protocol\"", workflow)
         self.assertIn("-max_protocol \"$protocol\"", workflow)

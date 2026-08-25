@@ -93,7 +93,7 @@ class DirectTlsContractTests(unittest.TestCase):
         self.assertIn("proxy_hide_header Strict-Transport-Security;", app)
         self.assertIn("proxy_hide_header X-Content-Type-Options;", app)
 
-    def test_exact_phoenix_socket_route_bypasses_only_the_gateway(self) -> None:
+    def test_exact_phoenix_socket_route_uses_gateway_only_ingress(self) -> None:
         app = self.text.split("server_name app.jeeb.fds-1.com;", 1)[1].split(
             "server_name cms.jeeb.fds-1.com;", 1
         )[0]
@@ -102,8 +102,9 @@ class DirectTlsContractTests(unittest.TestCase):
             "\n    }", 1
         )[0]
         self.assertIn(
-            "proxy_pass http://127.0.0.1:10069/socket/websocket;", socket
+            "proxy_pass http://127.0.0.1:10000/socket/websocket;", socket
         )
+        self.assertNotIn("10069", socket)
         self.assertIn("proxy_set_header Upgrade $http_upgrade;", socket)
         self.assertIn(
             "proxy_set_header Connection $jeeb_staging_connection_upgrade;", socket
@@ -226,6 +227,8 @@ class DirectTlsContractTests(unittest.TestCase):
             )
         self.assertIn("Legacy TLS was accepted", workflow)
         self.assertIn("Public TLS 1.2 was not accepted", workflow)
+        self.assertIn("^x-jeeb-realtime-proxy: gateway", workflow)
+        self.assertNotIn("127.0.0.1:10069", workflow)
 
 
 if __name__ == "__main__":

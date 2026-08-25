@@ -408,6 +408,7 @@ def main() -> int:
                 "https://app.jeeb.fds-1.com/health/ready",
                 "https://cms.jeeb.fds-1.com/healthz",
                 "verify-authorized-wss.mjs",
+                "^x-jeeb-realtime-proxy: gateway",
                 "StrictHostKeyChecking yes",
                 "JEEB_STAGING_SSH_KNOWN_HOSTS",
                 '"$(dirname -- "$target")" = "$root"',
@@ -504,6 +505,7 @@ def main() -> int:
         "192.168.2." + "50",
         "service rm",
         ":latest",
+        "127.0.0.1:10069",
     ):
         if forbidden in workflow or forbidden in rollout:
             findings.append(f"staging edge deploy contains forbidden text {forbidden!r}")

@@ -88,7 +88,9 @@ nginx listens for HTTPS only on `127.0.0.1` and `::1`, and rejects requests
 that do not carry the Worker's origin key. The matching key exists only as a
 Worker secret and in root-owned `/etc/nginx/jeeb-origin-key.map`; it must never
 be committed. The gateway is published on host port `10000` behind the app
-virtual host. The CMS virtual host proxies the LAN-only MSI origin at
+virtual host, including the exact `/socket/websocket` edge route. The gateway
+then proxies that upgrade to realtime over the encrypted staging overlay; nginx
+must never dial realtime's host port directly. The CMS virtual host proxies the LAN-only MSI origin at
 `192.168.2.39`, while its private callback paths fail closed. Microservice host
 ports remain staging-LAN services. A callback relay on `10090` is restricted by
 UFW to the local Docker gateway subnet and forwards the exact case callback
@@ -110,8 +112,9 @@ sudo install -o root -g root -m 0755 \
   /etc/letsencrypt/renewal-hooks/deploy/jeeb-nginx
 sudo cloudflared --config /etc/cloudflared-jeeb-staging/config.yml \
   tunnel ingress validate
-sudo nginx -t
-sudo systemctl restart cloudflared-jeeb-staging nginx
+sudo nginx -T >/tmp/jeeb-nginx-rendered.conf
+sudo nginx -t && sudo systemctl reload nginx
+sudo systemctl restart cloudflared-jeeb-staging
 ```
 
 The gateway staging workflow derives the exact `docker_gwbridge` gateway used
@@ -180,7 +183,9 @@ The gateway therefore owns a staging-only descriptor mint at
 - The workflow requires the exact public socket URL, a 30-to-900-second
   remaining lifetime, an actual WSS 101 upgrade, a successful Phoenix
   heartbeat, a successful exact-topic join, and denial of the same join with a
-  deliberately forged membership ticket. Tokens and tickets are never logged.
+  deliberately forged membership ticket. The unauthenticated near miss must
+  also return `X-Jeeb-Realtime-Proxy: gateway`, proving nginx did not bypass the
+  gateway. Tokens and tickets are never logged.
 
 Until both the gateway endpoint and the matching environment secret exist, the
 edge deployment is intentionally fail-closed. A generic 401/403, a direct

@@ -34,8 +34,9 @@ The detailed data-operation record and verification evidence are in
   memory, and JSON log rotation.
 - Failure policy: single-replica host-mode services update stop-first with
   automatic rollback and rollback-order stop-first. Preserve and verify the
-  incumbent digest before mutation. The staging edge is separately owner-blocked
-  and performs no Worker, nginx, origin, SSH, or provider action.
+  incumbent digest before mutation. The staging edge is a separate forward-only
+  release: it captures its incumbent state for audit but has no automatic
+  Worker or origin rollback authority.
 
 The workflow rejects a target unless both the hostname and `192.168.2.20` are
 present. GitHub-hosted runners reach SSH through Cloudflare Access using a
@@ -322,25 +323,25 @@ masked-call is local-only, and catalog is empty.
    state and logs, correct the fault in a new immutable commit, and obtain owner
    approval before another dispatch. Never bypass the health gate.
 
-### Owner-blocked forward-only edge deployment
+### Owner-approved forward-only edge deployment
 
-The owner has prohibited silent failure through automatic recovery. The manual
-edge workflow therefore stops in a separate prerequisite job with a loud
-`OWNER BLOCK` before checkout, secret access, Cloudflare or Worker calls, SSH,
-nginx/origin apply, or any other provider action. The deployment job cannot run
-while that prerequisite is red.
+On 2026-08-25, the owner explicitly accepted the forward-only failure policy for
+this Jeeb staging campaign and authorized removal of the deployment block. The
+manual edge workflow remains default-branch-only and may proceed from the
+separately reviewed enabling commit after that commit is merged normally.
 
 No automatic Worker or origin rollback, restoration command, failure trap, or
-failure-time cleanup remains. The dormant forward path still captures the exact
+failure-time cleanup exists. The forward path captures the exact
 incumbent Worker/Custom Domain state and nginx/association snapshot for audit,
 uses immutable Worker upload and exact-version promotion, serializes origin
 changes with a lock, and performs the real HTTPS, association, CMS, and
 authorized-WSS gates. The snapshot has no executable restore path.
 
-Enabling deployment requires an explicit owner-approved forward-only failure
-policy. Until then, do not remove or bypass the prerequisite block. A future
-failure must remain visible and must be corrected by a newly reviewed immutable
-commit; it must not trigger an automatic provider or origin mutation.
+The acceptance applies only to this staging campaign; it does not authorize a
+production mutation. Any failure remains visible and must be corrected by a
+newly reviewed immutable commit; it must not trigger an automatic provider or
+origin mutation. The Worker Custom Domain contract and public TLS verification
+remain scoped to `app.jeeb.fds-1.com` and `cms.jeeb.fds-1.com` only.
 
 Useful non-secret checks:
 

@@ -41,7 +41,7 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
         self.assertIn("branches: [main]", workflow)
         self.assertIsNone(re.search(r"(?m)^\s+paths(?:-ignore)?:", workflow))
 
-    def test_owner_block_is_structural_and_required_by_deploy(self) -> None:
+    def test_default_branch_gate_is_structural_and_required_by_deploy(self) -> None:
         workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
         self.assertEqual(POLICY.edge_workflow_findings(workflow), [])
 
@@ -54,11 +54,11 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
             self.assertNotIn("continue-on-error", properties)
             self.assertNotIn("if", properties)
 
-    def test_deploy_job_always_condition_cannot_bypass_owner_block(self) -> None:
+    def test_deploy_job_always_condition_cannot_bypass_default_branch_gate(self) -> None:
         workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
         mutated = workflow.replace(
-            "  deploy:\n    needs: owner-forward-only-block\n",
-            "  deploy:\n    if: ${{ always() }}\n    needs: owner-forward-only-block\n",
+            "  deploy:\n    needs: default-branch-gate\n",
+            "  deploy:\n    if: ${{ always() }}\n    needs: default-branch-gate\n",
             1,
         )
         self.assertNotEqual(mutated, workflow)
@@ -74,27 +74,26 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
         ):
             with self.subTest(property_line=property_line):
                 mutated = workflow.replace(
-                    "  deploy:\n    needs: owner-forward-only-block\n",
+                    "  deploy:\n    needs: default-branch-gate\n",
                     f"  deploy:\n    {property_line}\n"
-                    "    needs: owner-forward-only-block\n",
+                    "    needs: default-branch-gate\n",
                     1,
                 )
                 self.assertNotEqual(mutated, workflow)
                 self.assertTrue(POLICY.edge_workflow_findings(mutated))
 
-    def test_commented_owner_need_cannot_hide_real_deploy_dependency(self) -> None:
+    def test_commented_default_need_cannot_hide_real_deploy_dependency(self) -> None:
         workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
         mutated = workflow.replace(
-            "  deploy:\n    needs: owner-forward-only-block\n",
-            "  deploy:\n    # needs: owner-forward-only-block\n"
-            "    needs: default-branch-gate\n",
+            "  deploy:\n    needs: default-branch-gate\n",
+            "  deploy:\n    # needs: default-branch-gate\n",
             1,
         )
         self.assertNotEqual(mutated, workflow)
         findings = POLICY.edge_workflow_findings(mutated)
         self.assertTrue(any("structurally need" in finding for finding in findings))
 
-    def test_extra_job_cannot_bypass_failed_owner_dependency(self) -> None:
+    def test_extra_job_cannot_add_provider_mutation_authority(self) -> None:
         workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
         for command in (
             "npx wrangler versions deploy candidate@100% --yes",
@@ -104,11 +103,11 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
             with self.subTest(command=command):
                 mutated = workflow.rstrip() + (
                     "\n\n  bypass:\n"
-                    "    needs: owner-forward-only-block\n"
+                    "    needs: default-branch-gate\n"
                     "    if: ${{ always() }}\n"
                     "    runs-on: ubuntu-22.04\n"
                     "    steps:\n"
-                    "      - name: Bypass owner block\n"
+                    "      - name: Add provider mutation authority\n"
                     f"        run: {command}\n"
                 )
                 findings = POLICY.edge_workflow_findings(mutated)
@@ -120,12 +119,12 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
     def test_default_branch_gate_cannot_gain_provider_deploy_step(self) -> None:
         workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
         injected_step = (
-            "\n      - name: Deploy before owner block\n"
+            "\n      - name: Deploy before branch gate completes\n"
             "        run: npx wrangler versions deploy candidate@100% --yes\n"
         )
         mutated = workflow.replace(
-            "\n\n  owner-forward-only-block:",
-            injected_step + "\n  owner-forward-only-block:",
+            "\n\n  deploy:",
+            injected_step + "\n  deploy:",
             1,
         )
         self.assertNotEqual(mutated, workflow)
@@ -135,21 +134,20 @@ class DeploymentSafetyPolicyTests(unittest.TestCase):
             msg=findings,
         )
 
-    def test_direct_rollout_if_false_wrapper_cannot_hide_owner_block(self) -> None:
+    def test_direct_rollout_rejects_reintroduced_owner_block(self) -> None:
         rollout = EDGE_ROLLOUT.read_text(encoding="utf-8")
         block = (
             "echo '::error::OWNER BLOCK: forward-only edge promotion is pending "
             "approval; no origin mutation was attempted.' >&2\n"
             "exit 78"
         )
-        wrapped = "if false; then\n  " + block.replace("\n", "\n  ") + "\nfi"
-        mutated = rollout.replace(block, wrapped, 1)
+        mutated = rollout.replace("set -euo pipefail", "set -euo pipefail\n\n" + block, 1)
         self.assertNotEqual(mutated, rollout)
-        self.assertTrue(POLICY.direct_rollout_block_findings(mutated))
+        self.assertTrue(POLICY.direct_rollout_findings(mutated))
 
-    def test_direct_rollout_exits_78_without_path_or_arguments(self) -> None:
+    def test_direct_rollout_requires_arguments_before_tool_or_host_access(self) -> None:
         rollout = EDGE_ROLLOUT.read_text(encoding="utf-8")
-        self.assertEqual(POLICY.direct_rollout_block_findings(rollout), [])
+        self.assertEqual(POLICY.direct_rollout_findings(rollout), [])
 
     def test_mutation_outside_former_path_filter_is_rejected(self) -> None:
         path = Path("ops/new-release-authority.yml")

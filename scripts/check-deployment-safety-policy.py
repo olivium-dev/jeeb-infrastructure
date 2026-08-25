@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce the owner block and forward-only staging edge authority."""
+"""Enforce default-branch-only, forward-only staging edge authority."""
 
 from __future__ import annotations
 
@@ -31,24 +31,15 @@ AUTOMATIC_EDGE_RECOVERY_COMMAND = re.compile(
     re.I | re.M,
 )
 EXECUTABLE_SUFFIXES = {".sh", ".yml", ".yaml"}
-OWNER_BLOCK_JOB = "owner-forward-only-block"
 DEFAULT_GATE_JOB = "default-branch-gate"
-APPROVED_EDGE_JOBS = {DEFAULT_GATE_JOB, OWNER_BLOCK_JOB, "deploy"}
+APPROVED_EDGE_JOBS = {DEFAULT_GATE_JOB, "deploy"}
 DEFAULT_GATE_STEP = "Refuse non-default-branch dispatch"
-OWNER_BLOCK_STEP = "OWNER BLOCK — edge mutations are disabled"
-OWNER_BLOCK_MARKER = "OWNER BLOCK: automatic rollback/recovery has been removed."
-DIRECT_BLOCK_MARKER = "OWNER BLOCK: forward-only edge promotion is pending approval"
-OWNER_BLOCK_COMMANDS = (
-    "echo '::error::OWNER BLOCK: automatic rollback/recovery has been removed.'",
-    "echo '::error::No Cloudflare, Worker, SSH, nginx, origin, or provider action is permitted.'",
-    "echo '::error::Approve a forward-only failure policy before enabling this deployment.'",
-    "exit 78",
-)
-DIRECT_BLOCK_COMMANDS = (
+ROLLOUT_ENABLED_PREFIX = (
     "set -euo pipefail",
-    "echo '::error::OWNER BLOCK: forward-only edge promotion is pending approval; "
-    "no origin mutation was attempted.' >&2",
-    "exit 78",
+    "mode=${1:?mode is required}",
+    "run_key=${2:?run key is required}",
+    "commit_sha=${3:?commit SHA is required}",
+    "stage_ref=${4:-}",
 )
 DEFAULT_GATE_COMMANDS = (
     "set -euo pipefail",
@@ -252,12 +243,9 @@ def edge_workflow_findings(source: str) -> list[str]:
             f"{sorted(APPROVED_EDGE_JOBS)!r}; got {sorted(actual_jobs)!r}"
         )
     default_gate = jobs.get(DEFAULT_GATE_JOB)
-    owner = jobs.get(OWNER_BLOCK_JOB)
     deploy = jobs.get("deploy")
     if default_gate is None:
         return [f"staging edge workflow is missing structural job {DEFAULT_GATE_JOB!r}"]
-    if owner is None:
-        return [f"staging edge workflow is missing structural job {OWNER_BLOCK_JOB!r}"]
     if deploy is None:
         return ["staging edge workflow is missing structural job 'deploy'"]
 
@@ -302,41 +290,17 @@ def edge_workflow_findings(source: str) -> list[str]:
                     "default-branch-gate must pass its exact branch check under empty PATH"
                 )
 
-    for job_name, job_lines in ((OWNER_BLOCK_JOB, owner), ("deploy", deploy)):
-        properties = direct_properties(job_lines, 4)
-        if "continue-on-error" in properties:
-            findings.append(f"{job_name} must not set job-level continue-on-error")
-        if "if" in properties:
-            findings.append(f"{job_name} must not set any job-level if condition")
+    deploy_properties = direct_properties(deploy, 4)
+    if "continue-on-error" in deploy_properties:
+        findings.append("deploy must not set job-level continue-on-error")
+    if "if" in deploy_properties:
+        findings.append("deploy must not set any job-level if condition")
 
-    deploy_needs = direct_properties(deploy, 4).get("needs", [])
-    if deploy_needs != [OWNER_BLOCK_JOB]:
+    deploy_needs = deploy_properties.get("needs", [])
+    if deploy_needs != [DEFAULT_GATE_JOB]:
         findings.append(
-            f"deploy must structurally need only {OWNER_BLOCK_JOB!r}; got {deploy_needs!r}"
+            f"deploy must structurally need only {DEFAULT_GATE_JOB!r}; got {deploy_needs!r}"
         )
-
-    owner_steps = workflow_steps(owner)
-    if len(owner_steps) != 1:
-        findings.append("owner block job must contain exactly one step")
-        return findings
-    owner_step = owner_steps[0]
-    owner_properties = step_properties(owner_step)
-    if owner_properties.get("name") != [OWNER_BLOCK_STEP]:
-        findings.append("owner block step name is missing or structurally changed")
-    if "if" in owner_properties or "continue-on-error" in owner_properties:
-        findings.append("owner block step must be unconditional and fail-closed")
-    block_script = literal_run_script(owner_step)
-    if block_script is None:
-        findings.append("owner block step must contain a literal run script")
-    else:
-        if tuple(shell_command_lines(block_script)) != OWNER_BLOCK_COMMANDS:
-            findings.append("owner block run script contains an unexpected command")
-        result = blocked_shell_result(block_script)
-        output = result.stdout + result.stderr
-        if result.returncode != 78 or OWNER_BLOCK_MARKER not in output:
-            findings.append(
-                "owner block script must emit its marker and exit exactly 78 under empty PATH"
-            )
 
     for step in workflow_steps(deploy):
         properties = step_properties(step)
@@ -347,16 +311,16 @@ def edge_workflow_findings(source: str) -> list[str]:
     return findings
 
 
-def direct_rollout_block_findings(source: str) -> list[str]:
+def direct_rollout_findings(source: str) -> list[str]:
     findings: list[str] = []
     commands = shell_command_lines(source)
-    if tuple(commands[: len(DIRECT_BLOCK_COMMANDS)]) != DIRECT_BLOCK_COMMANDS:
-        findings.append("origin rollout owner block is not the first executable prefix")
+    if tuple(commands[: len(ROLLOUT_ENABLED_PREFIX)]) != ROLLOUT_ENABLED_PREFIX:
+        findings.append("origin rollout validation is not the first executable prefix")
     result = blocked_shell_result(source)
     output = result.stdout + result.stderr
-    if result.returncode != 78 or DIRECT_BLOCK_MARKER not in output:
+    if result.returncode != 1 or "mode is required" not in output:
         findings.append(
-            "origin rollout must emit its owner marker and exit exactly 78 under empty PATH"
+            "origin rollout must reject a missing mode before tool or host access"
         )
     return findings
 
@@ -439,7 +403,7 @@ def main() -> int:
             "staging origin rollout",
         )
     )
-    findings.extend(direct_rollout_block_findings(rollout))
+    findings.extend(direct_rollout_findings(rollout))
     findings.extend(
         require(
             wss_probe,
@@ -490,7 +454,7 @@ def main() -> int:
             (
                 "Super Login Plus is retired",
                 "Authorized realtime edge-probe contract",
-                "Owner-blocked forward-only edge deployment",
+                "Owner-approved forward-only edge deployment",
                 "No automatic Worker or origin rollback",
             ),
             "active staging runbook",
@@ -534,7 +498,7 @@ def main() -> int:
         return 1
 
     print(
-        "Deployment safety verified: loud owner block, forward-only edge code, exact "
+        "Deployment safety verified: default-branch gate, forward-only edge code, exact "
         "Worker/domain state, real authorized Phoenix WSS, strict access, and no "
         "automatic rollback/recovery or infra-owned Swarm mutation."
     )

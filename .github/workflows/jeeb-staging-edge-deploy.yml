@@ -33,19 +33,8 @@ jobs:
             exit 1
           }
 
-  owner-forward-only-block:
-    needs: default-branch-gate
-    runs-on: ubuntu-22.04
-    steps:
-      - name: OWNER BLOCK — edge mutations are disabled
-        run: |
-          echo '::error::OWNER BLOCK: automatic rollback/recovery has been removed.'
-          echo '::error::No Cloudflare, Worker, SSH, nginx, origin, or provider action is permitted.'
-          echo '::error::Approve a forward-only failure policy before enabling this deployment.'
-          exit 78
-
   deploy:
-    needs: owner-forward-only-block
+    needs: default-branch-gate
     runs-on: ubuntu-22.04
     environment: staging
     steps:

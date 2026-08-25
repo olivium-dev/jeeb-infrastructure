@@ -349,6 +349,28 @@ newly reviewed immutable commit; it must not trigger an automatic provider or
 origin mutation. The Worker Custom Domain contract and public TLS verification
 remain scoped to `app.jeeb.fds-1.com` and `cms.jeeb.fds-1.com` only.
 
+The Actions SSH account has ordinary password-protected sudo by default. Before
+dispatching the edge workflow, an operator with existing console authority must
+install the reviewed rollout helper and its scoped sudoers policy from the exact
+default-branch commit:
+
+```bash
+sudo install -o root -g root -m 0755 \
+  deploy/staging/scripts/edge-origin-rollout.sh \
+  /usr/local/sbin/jeeb-edge-origin-rollout
+sudo visudo -cf deploy/staging/sudoers/jeeb-staging-edge-deploy
+sudo install -o root -g root -m 0440 \
+  deploy/staging/sudoers/jeeb-staging-edge-deploy \
+  /etc/sudoers.d/jeeb-staging-edge-deploy
+```
+
+This does not grant passwordless root shell access. It permits only the exact
+read-only nginx/service checks and the root-owned helper's `apply` and
+`finalize` modes. The workflow verifies the helper owner, mode, and SHA-256
+against its checked-out source before any origin or Worker mutation. A helper
+source change therefore requires a new reviewed install; never stream a script
+into `sudo bash` or weaken the policy to unrestricted `NOPASSWD`.
+
 Useful non-secret checks:
 
 ```bash

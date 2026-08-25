@@ -66,6 +66,7 @@ class DirectTlsContractTests(unittest.TestCase):
         self.assertIn('sudo -n "$ORIGIN_ROLLOUT_HELPER"', workflow)
         self.assertIn("sudo -n /usr/sbin/nginx -T >/dev/null", workflow)
         self.assertIn("sudo -n /usr/sbin/nginx -t", workflow)
+        self.assertNotIn("--strict", workflow)
         self.assertNotIn("sudo bash -s", workflow)
         self.assertNotIn("sudo -n bash -s", workflow)
 

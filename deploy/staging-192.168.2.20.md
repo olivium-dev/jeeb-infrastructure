@@ -50,12 +50,18 @@ The locally managed tunnel `jeeb-staging-192-168-2-20` is run by the enabled
 systemd unit `cloudflared-jeeb-staging.service`. It follows the same tunnel
 pattern as the other working servers; no router port forwarding is required.
 
-The public Cloudflare edge must apply a hostname-scoped minimum-TLS rule to
-`app.jeeb.fds-1.com` and `cms.jeeb.fds-1.com` that rejects TLS 1.0 and 1.1.
+The desired public Cloudflare edge policy is a hostname-scoped minimum-TLS rule
+for `app.jeeb.fds-1.com` and `cms.jeeb.fds-1.com` that rejects TLS 1.0 and 1.1.
 Do not change the zone-wide TLS floor: unrelated `fds-1.com` products are out of
-scope. The edge workflow independently handshakes both hosts and fails before
-finalization unless legacy TLS is rejected and TLS 1.2 succeeds. It also proves
-HTTP 308 redirects on both public hosts with the path and query preserved.
+scope. As verified on 2026-08-25, the zone is on Cloudflare Free without the
+Advanced Certificate Manager add-on required for per-hostname minimum TLS.
+The campaign owner accepted the existing TLS 1.0/1.1 exposure for this staging
+functional campaign only. The edge workflow records sanitized per-host legacy
+TLS results as warnings while keeping TLS 1.2 acceptance, HTTP 308 redirects
+with path/query preservation, associations, CMS, and authenticated WSS as hard
+gates. This exception is not valid for production promotion; purchase and
+enable Advanced Certificate Manager before enforcing the desired hostname-only
+floor. Do not broaden the exception into a zone-wide mutation.
 
 - Worker `jeeb-staging-host-router` owns the exact Custom Domains
   `app.jeeb.fds-1.com` and `cms.jeeb.fds-1.com` and injects a runtime origin key.

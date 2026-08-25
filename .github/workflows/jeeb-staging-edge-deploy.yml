@@ -15,6 +15,7 @@ env:
   WRANGLER_CONFIG: deploy/staging/cloudflare/wrangler.toml
   CLOUDFLARE_ACCOUNT_ID: '58198ae51392a2cc2d391867fb65da7e'
   WORKER_NAME: jeeb-staging-host-router
+  ORIGIN_ROLLOUT_HELPER: /usr/local/sbin/jeeb-edge-origin-rollout
   EDGE_RUN_KEY: ${{ github.run_id }}_${{ github.run_attempt }}
   REMOTE_STAGE: .jeeb-edge-deploy/${{ github.run_id }}_${{ github.run_attempt }}
 
@@ -55,6 +56,8 @@ jobs:
           node --check deploy/staging/scripts/verify-authorized-wss.mjs
           bash -n deploy/staging/scripts/edge-origin-rollout.sh
           sh -n deploy/staging/letsencrypt/renewal-hooks/deploy/jeeb-nginx
+          sudo /usr/sbin/visudo -cf \
+            deploy/staging/sudoers/jeeb-staging-edge-deploy
           npx --yes "wrangler@$WRANGLER_VERSION" versions upload --dry-run \
             --config "$WRANGLER_CONFIG" \
             --outdir "$RUNNER_TEMP/jeeb-staging-worker-dry-run"
@@ -123,16 +126,29 @@ jobs:
       - name: Assert exact host and healthy incumbent edge
         run: |
           set -euo pipefail
-          ssh jeeb-staging 'set -eu
-            [ "$(hostname -s)" = olivium-ephemerals ]
-            ip -4 -o addr show scope global \
-              | awk '\''{ split($4, address, "/"); print address[1] }'\'' \
-              | grep -Fxq 192.168.2.20
-            sudo test -f /etc/nginx/sites-available/jeeb-direct-tls.conf
-            sudo nginx -t
-            sudo systemctl is-active --quiet nginx
-            sudo systemctl is-active --quiet cloudflared-jeeb-staging
-            curl -fsS --max-time 5 http://127.0.0.1:10000/health/ready >/dev/null'
+          expected_rollout_sha=$(sha256sum \
+            deploy/staging/scripts/edge-origin-rollout.sh | awk '{ print $1 }')
+          ssh jeeb-staging bash -s -- \
+            "$expected_rollout_sha" "$ORIGIN_ROLLOUT_HELPER" <<'REMOTE'
+          set -euo pipefail
+          expected_rollout_sha=$1
+          rollout_helper=$2
+          [ "$(hostname -s)" = olivium-ephemerals ]
+          ip -4 -o addr show scope global \
+            | awk '{ split($4, address, "/"); print address[1] }' \
+            | grep -Fxq 192.168.2.20
+          test -f /etc/nginx/sites-available/jeeb-direct-tls.conf
+          test -f "$rollout_helper"
+          test ! -L "$rollout_helper"
+          [ "$(stat -c '%U:%G:%a' "$rollout_helper")" = root:root:755 ]
+          [ "$(sha256sum "$rollout_helper" | awk '{ print $1 }')" \
+            = "$expected_rollout_sha" ]
+          sudo -n /usr/sbin/nginx -t
+          sudo -n /usr/bin/systemctl is-active --quiet nginx
+          sudo -n /usr/bin/systemctl is-active --quiet cloudflared-jeeb-staging
+          curl -fsS --max-time 5 \
+            http://127.0.0.1:10000/health/ready >/dev/null
+          REMOTE
 
       - name: Capture exact incumbent Worker and domain associations
         id: worker-incumbent
@@ -203,9 +219,8 @@ jobs:
         id: origin
         run: |
           set -euo pipefail
-          ssh jeeb-staging sudo bash -s -- \
-            apply "$EDGE_RUN_KEY" "$GITHUB_SHA" "$REMOTE_STAGE" \
-            < deploy/staging/scripts/edge-origin-rollout.sh
+          ssh jeeb-staging sudo -n "$ORIGIN_ROLLOUT_HELPER" \
+            apply "$EDGE_RUN_KEY" "$GITHUB_SHA" "$REMOTE_STAGE"
 
       - name: Upload and deploy the exact commit-identified Worker version
         id: worker-candidate
@@ -446,9 +461,8 @@ jobs:
           ' "$domain_response" > "$domain_snapshot"
           cmp "$RUNNER_TEMP/incumbent-worker-domains.json" "$domain_snapshot"
 
-          ssh jeeb-staging sudo bash -s -- \
-            finalize "$EDGE_RUN_KEY" "$GITHUB_SHA" "$REMOTE_STAGE" \
-            < deploy/staging/scripts/edge-origin-rollout.sh
+          ssh jeeb-staging sudo -n "$ORIGIN_ROLLOUT_HELPER" \
+            finalize "$EDGE_RUN_KEY" "$GITHUB_SHA" "$REMOTE_STAGE"
           {
             printf '### Jeeb staging edge deployment\n\n'
             printf -- "- Git commit: \`%s\`\n" "$GITHUB_SHA"

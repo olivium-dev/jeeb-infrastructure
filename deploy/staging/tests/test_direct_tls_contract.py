@@ -29,6 +29,7 @@ EDGE_WORKFLOW = (
     / "workflows"
     / "jeeb-staging-edge-deploy.yml"
 )
+SUDOERS = Path(__file__).resolve().parents[1] / "sudoers" / "jeeb-staging-edge-deploy"
 RENEWAL_HOOK = (
     Path(__file__).resolve().parents[1]
     / "letsencrypt"
@@ -53,6 +54,33 @@ UPLOAD_CERT_SHA256 = (
 
 
 class DirectTlsContractTests(unittest.TestCase):
+    def test_edge_workflow_uses_exact_root_owned_rollout_helper(self) -> None:
+        workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            "ORIGIN_ROLLOUT_HELPER: /usr/local/sbin/jeeb-edge-origin-rollout",
+            workflow,
+        )
+        self.assertIn("root:root:755", workflow)
+        self.assertIn("expected_rollout_sha=$(sha256sum", workflow)
+        self.assertIn('[ "$(hostname -s)" = olivium-ephemerals ]', workflow)
+        self.assertIn('sudo -n "$ORIGIN_ROLLOUT_HELPER"', workflow)
+        self.assertIn("sudo -n /usr/sbin/nginx -t", workflow)
+        self.assertNotIn("sudo bash -s", workflow)
+        self.assertNotIn("sudo -n bash -s", workflow)
+
+    def test_sudoers_grants_only_edge_read_and_forward_helper(self) -> None:
+        policy = SUDOERS.read_text(encoding="utf-8")
+        self.assertIn("/usr/sbin/nginx -t", policy)
+        self.assertIn("/usr/bin/systemctl is-active --quiet nginx", policy)
+        self.assertIn(
+            "/usr/bin/systemctl is-active --quiet cloudflared-jeeb-staging",
+            policy,
+        )
+        self.assertIn("/usr/local/sbin/jeeb-edge-origin-rollout apply *", policy)
+        self.assertIn("/usr/local/sbin/jeeb-edge-origin-rollout finalize *", policy)
+        self.assertNotIn("/usr/bin/bash", policy)
+        self.assertNotIn("systemctl restart", policy)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = CONFIG.read_text(encoding="utf-8")

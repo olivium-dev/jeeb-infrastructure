@@ -39,6 +39,8 @@ jobs:
           node --check deploy/staging/cloudflare/jeeb-staging-router.mjs
           node --check deploy/staging/scripts/verify-authorized-wss.mjs
           bash -n deploy/staging/scripts/edge-origin-rollout.sh
+          sudo /usr/sbin/visudo -cf \
+            deploy/staging/sudoers/jeeb-staging-edge-deploy
           python3 scripts/check-deployment-safety-policy.py
           npx --yes wrangler@4.120.0 versions upload --dry-run \
             --config deploy/staging/cloudflare/wrangler.toml \

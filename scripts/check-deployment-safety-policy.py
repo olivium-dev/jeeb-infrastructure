@@ -15,6 +15,7 @@ EDGE_WORKFLOW = ROOT / ".github/workflows/jeeb-staging-edge-deploy.yml"
 SAFETY_WORKFLOW = ROOT / ".github/workflows/deployment-safety.yml"
 CONTRACT_WORKFLOW = ROOT / ".github/workflows/staging-edge-contract.yml"
 EDGE_ROLLOUT = ROOT / "deploy/staging/scripts/edge-origin-rollout.sh"
+EDGE_SUDOERS = ROOT / "deploy/staging/sudoers/jeeb-staging-edge-deploy"
 WSS_PROBE = ROOT / "deploy/staging/scripts/verify-authorized-wss.mjs"
 ACTIVE_RUNBOOK = ROOT / "deploy/staging-192.168.2.20.md"
 SWARM_MUTATION_COMMAND = re.compile(
@@ -348,6 +349,7 @@ def main() -> int:
     safety = SAFETY_WORKFLOW.read_text(encoding="utf-8")
     contract = CONTRACT_WORKFLOW.read_text(encoding="utf-8")
     rollout = EDGE_ROLLOUT.read_text(encoding="utf-8")
+    sudoers = EDGE_SUDOERS.read_text(encoding="utf-8")
     wss_probe = WSS_PROBE.read_text(encoding="utf-8")
     runbook = ACTIVE_RUNBOOK.read_text(encoding="utf-8")
     findings: list[str] = []
@@ -376,6 +378,11 @@ def main() -> int:
                 "StrictHostKeyChecking yes",
                 "JEEB_STAGING_SSH_KNOWN_HOSTS",
                 '"$(dirname -- "$target")" = "$root"',
+                "ORIGIN_ROLLOUT_HELPER: /usr/local/sbin/jeeb-edge-origin-rollout",
+                "expected_rollout_sha=$(sha256sum",
+                "root:root:755",
+                "sudo -n /usr/sbin/nginx -t",
+                'sudo -n "$ORIGIN_ROLLOUT_HELPER"',
             ),
             "staging edge workflow",
         )
@@ -404,6 +411,20 @@ def main() -> int:
         )
     )
     findings.extend(direct_rollout_findings(rollout))
+    findings.extend(
+        require(
+            sudoers,
+            (
+                "/usr/sbin/nginx -t",
+                "/usr/bin/systemctl is-active --quiet nginx",
+                "/usr/bin/systemctl is-active --quiet cloudflared-jeeb-staging",
+                "/usr/local/sbin/jeeb-edge-origin-rollout apply *",
+                "/usr/local/sbin/jeeb-edge-origin-rollout finalize *",
+                "ec2-user ALL=(root) NOPASSWD:",
+            ),
+            "staging edge sudoers policy",
+        )
+    )
     findings.extend(
         require(
             wss_probe,
@@ -473,6 +494,19 @@ def main() -> int:
     ):
         if forbidden in workflow or forbidden in rollout:
             findings.append(f"staging edge deploy contains forbidden text {forbidden!r}")
+
+    for forbidden in (
+        "/usr/bin/bash",
+        "/bin/bash",
+        "systemctl restart",
+        "ALL=(ALL) NOPASSWD: ALL",
+    ):
+        if forbidden in sudoers:
+            findings.append(
+                f"staging edge sudoers contains forbidden text {forbidden!r}"
+            )
+    if re.search(r"sudo(?:\s+-n)?\s+(?:/usr/bin/|/bin/)?bash\s+-s", workflow):
+        findings.append("staging edge workflow must not stream commands to a root shell")
 
     mutable_action = re.compile(r"^\s*uses:\s*(?!\./)[^@\s]+@(?!(?:[0-9a-f]{40})\s*$)", re.M)
     if mutable_action.search(workflow):

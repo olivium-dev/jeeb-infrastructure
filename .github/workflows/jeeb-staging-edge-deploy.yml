@@ -330,12 +330,51 @@ jobs:
             https://cms.jeeb.fds-1.com/healthz
           grep -Eq '^healthy\r?$' "$response_body"
 
-          curl -sS --connect-timeout 5 --max-time 10 \
-            -D "$response_headers" -o "$response_body" \
-            http://app.jeeb.fds-1.com/health/ready
-          grep -Eq '^HTTP/[0-9.]+ 308 ' "$response_headers"
-          grep -Eiq '^location: https://app\.jeeb\.fds-1\.com/health/ready\r?$' \
-            "$response_headers"
+          verify_http_redirect() {
+            local host=$1 path_and_query=$2 actual_location
+            curl -sS --connect-timeout 5 --max-time 10 \
+              -D "$response_headers" -o "$response_body" \
+              "http://$host$path_and_query"
+            grep -Eq '^HTTP/[0-9.]+ 308 ' "$response_headers"
+            actual_location=$(awk '
+              tolower($1) == "location:" {
+                sub(/\r$/, "")
+                sub(/^[^:]*:[[:space:]]*/, "")
+                print
+                exit
+              }
+            ' "$response_headers")
+            [ "$actual_location" = "https://$host$path_and_query" ]
+          }
+
+          verify_public_tls_floor() {
+            local host=$1 protocol output
+            for protocol in TLSv1 TLSv1.1; do
+              output=$RUNNER_TEMP/tls-${host//./-}-${protocol//./-}
+              if printf '' | openssl s_client \
+                -connect "$host:443" -servername "$host" \
+                -min_protocol "$protocol" -max_protocol "$protocol" \
+                -cipher 'ALL:@SECLEVEL=0' >"$output" 2>&1; then
+                echo "::error::Legacy TLS was accepted by $host: $protocol"
+                return 1
+              fi
+            done
+
+            output=$RUNNER_TEMP/tls-${host//./-}-TLSv1-2
+            printf '' | openssl s_client \
+              -connect "$host:443" -servername "$host" \
+              -min_protocol TLSv1.2 -max_protocol TLSv1.2 \
+              >"$output" 2>&1 || {
+                echo "::error::Public TLS 1.2 was not accepted by $host"
+                return 1
+              }
+            grep -Eq '^ *Protocol *: TLSv1\.2$|^New, TLSv1\.2,' "$output"
+          }
+
+          verify_http_redirect app.jeeb.fds-1.com /edge-redirect-probe?source=release
+          verify_http_redirect cms.jeeb.fds-1.com /edge-redirect-probe?source=release
+          verify_public_tls_floor app.jeeb.fds-1.com
+          verify_public_tls_floor cms.jeeb.fds-1.com
 
           for document in apple-app-site-association assetlinks.json; do
             curl -fsS --compressed --proto '=https' --tlsv1.2 \

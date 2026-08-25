@@ -23,6 +23,12 @@ WRANGLER = (
     / "cloudflare"
     / "wrangler.toml"
 )
+EDGE_WORKFLOW = (
+    Path(__file__).resolve().parents[3]
+    / ".github"
+    / "workflows"
+    / "jeeb-staging-edge-deploy.yml"
+)
 RENEWAL_HOOK = (
     Path(__file__).resolve().parents[1]
     / "letsencrypt"
@@ -205,6 +211,21 @@ class DirectTlsContractTests(unittest.TestCase):
         self.assertIn('pattern = "app.jeeb.fds-1.com"', config)
         self.assertIn('pattern = "cms.jeeb.fds-1.com"', config)
         self.assertNotIn("ORIGIN_KEY", config)
+
+    def test_public_gate_rejects_legacy_tls_and_checks_both_redirects(self) -> None:
+        workflow = EDGE_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("verify_public_tls_floor()", workflow)
+        self.assertIn("-min_protocol \"$protocol\"", workflow)
+        self.assertIn("-max_protocol \"$protocol\"", workflow)
+        self.assertIn("-cipher 'ALL:@SECLEVEL=0'", workflow)
+        for host in ("app.jeeb.fds-1.com", "cms.jeeb.fds-1.com"):
+            self.assertIn(f"verify_public_tls_floor {host}", workflow)
+            self.assertIn(
+                f"verify_http_redirect {host} /edge-redirect-probe?source=release",
+                workflow,
+            )
+        self.assertIn("Legacy TLS was accepted", workflow)
+        self.assertIn("Public TLS 1.2 was not accepted", workflow)
 
 
 if __name__ == "__main__":

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 CONFIG = Path(__file__).resolve().parents[1] / "nginx" / "jeeb-direct-tls.conf"
@@ -50,6 +52,11 @@ PLAY_APP_SIGNING_SHA256 = (
 UPLOAD_CERT_SHA256 = (
     "7A:E6:A6:20:BA:89:E8:43:85:13:E4:2C:F5:9E:69:E3:"
     "CF:0F:CD:CE:8C:87:D7:71:3B:07:8C:80:3D:A2:E3:BA"
+)
+OTP_VERIFY_LOCATION = "location ~ ^/(?:v1/)?auth/otp/verify/?$ {"
+OTP_VERIFY_PROBLEM_JSON = (
+    '{"type":"about:blank","title":"Service Unavailable","status":503,'
+    '"detail":"The service is temporarily unavailable. Please try again."}'
 )
 
 
@@ -105,8 +112,8 @@ class DirectTlsContractTests(unittest.TestCase):
             2,
         )
         self.assertEqual(self.text.count("ssl_protocols TLSv1.2 TLSv1.3;"), 2)
-        self.assertEqual(self.text.count("add_header Strict-Transport-Security"), 4)
-        self.assertEqual(self.text.count("add_header X-Content-Type-Options"), 4)
+        self.assertEqual(self.text.count("add_header Strict-Transport-Security"), 5)
+        self.assertEqual(self.text.count("add_header X-Content-Type-Options"), 5)
         self.assertNotIn("ssl_protocols TLSv1 ", self.text)
 
     def test_worker_origin_requires_root_owned_runtime_secret(self) -> None:
@@ -123,6 +130,85 @@ class DirectTlsContractTests(unittest.TestCase):
         self.assertIn("proxy_set_header X-Forwarded-Proto https;", app)
         self.assertIn("proxy_hide_header Strict-Transport-Security;", app)
         self.assertIn("proxy_hide_header X-Content-Type-Options;", app)
+
+    def test_otp_verify_freeze_returns_exact_generic_problem_without_logging(self) -> None:
+        app = self.text.split("server_name app.jeeb.fds-1.com;", 1)[1].split(
+            "server_name cms.jeeb.fds-1.com;", 1
+        )[0]
+        self.assertIn(OTP_VERIFY_LOCATION, app)
+        freeze = app.split(OTP_VERIFY_LOCATION, 1)[1].split("\n    }", 1)[0]
+
+        self.assertIn("access_log off;", freeze)
+        self.assertIn("default_type application/problem+json;", freeze)
+        self.assertIn('add_header Cache-Control "no-store" always;', freeze)
+        self.assertIn(
+            'add_header Strict-Transport-Security "max-age=31536000" always;',
+            freeze,
+        )
+        self.assertIn('add_header X-Content-Type-Options "nosniff" always;', freeze)
+        self.assertIn(f"return 503 '{OTP_VERIFY_PROBLEM_JSON}';", freeze)
+        self.assertNotIn("proxy_pass", freeze)
+        self.assertNotIn("Retry-After", freeze)
+        self.assertNotIn("$args", freeze)
+        self.assertNotIn("$request_body", freeze)
+
+        problem = json.loads(OTP_VERIFY_PROBLEM_JSON)
+        self.assertEqual(
+            problem,
+            {
+                "type": "about:blank",
+                "title": "Service Unavailable",
+                "status": 503,
+                "detail": "The service is temporarily unavailable. Please try again.",
+            },
+        )
+        self.assertNotIn("instance", problem)
+        self.assertNotIn("code", problem)
+        self.assertNotIn("errorCode", problem)
+        self.assertNotIn("retryAfter", problem)
+
+    def test_otp_verify_freeze_matches_both_aliases_slashes_and_queries_only(self) -> None:
+        pattern = OTP_VERIFY_LOCATION.removeprefix("location ~ ").removesuffix(" {")
+        matcher = re.compile(pattern)
+
+        frozen_targets = (
+            "/v1/auth/otp/verify",
+            "/v1/auth/otp/verify/",
+            "/v1/auth/otp/verify?source=contract",
+            "/v1/auth/otp/verify/?source=contract",
+            "/auth/otp/verify",
+            "/auth/otp/verify/",
+            "/auth/otp/verify?source=contract",
+            "/auth/otp/verify/?source=contract",
+        )
+        for target in frozen_targets:
+            with self.subTest(target=target):
+                self.assertIsNotNone(
+                    matcher.fullmatch(urlsplit(target).path),
+                    "nginx selects regex locations using the URI path without arguments",
+                )
+
+        forwarded_targets = (
+            "/v1/auth/otp/request",
+            "/v1/auth/otp/request?source=contract",
+            "/auth/otp/request",
+            "/auth/otp/request/",
+            "/v1/auth/otp/verify/extra",
+            "/auth/otp/verify-extra",
+            "/health/ready",
+            "/v1/users/me",
+        )
+        for target in forwarded_targets:
+            with self.subTest(target=target):
+                self.assertIsNone(matcher.fullmatch(urlsplit(target).path))
+
+        app = self.text.split("server_name app.jeeb.fds-1.com;", 1)[1].split(
+            "server_name cms.jeeb.fds-1.com;", 1
+        )[0]
+        self.assertLess(app.index(OTP_VERIFY_LOCATION), app.index("location / {"))
+        catch_all = app.split("location / {", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("proxy_pass http://127.0.0.1:10000;", catch_all)
+        self.assertEqual(app.count(OTP_VERIFY_LOCATION), 1)
 
     def test_exact_phoenix_socket_route_uses_gateway_only_ingress(self) -> None:
         app = self.text.split("server_name app.jeeb.fds-1.com;", 1)[1].split(

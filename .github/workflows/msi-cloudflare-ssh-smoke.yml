@@ -1,0 +1,133 @@
+name: MSI Cloudflare SSH smoke
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: msi-cloudflare-ssh-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Public password SSH and HTTP smoke
+    if: ${{ github.ref_name == github.event.repository.default_branch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      MSI_SSH_HOST: ssh-msi.olivium.space
+      MSI_SSH_USER: msi-access
+      CLOUDFLARED_VERSION: 2026.8.2
+      CLOUDFLARED_SHA256: fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2
+
+    steps:
+      - name: Require protected credentials
+        env:
+          MSI_SSH_PASSWORD: ${{ secrets.MSI_SSH_PASSWORD }}
+          MSI_SSH_KNOWN_HOSTS: ${{ secrets.MSI_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$MSI_SSH_PASSWORD" || {
+            echo "::error::MSI_SSH_PASSWORD is not configured"
+            exit 1
+          }
+          test -n "$MSI_SSH_KNOWN_HOSTS" || {
+            echo "::error::MSI_SSH_KNOWN_HOSTS is not configured"
+            exit 1
+          }
+
+      - name: Install pinned cloudflared
+        run: |
+          set -euo pipefail
+          cloudflared_path="$RUNNER_TEMP/cloudflared"
+          bin_dir="$RUNNER_TEMP/bin"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --output "$cloudflared_path" \
+            "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+          printf '%s  %s\n' "$CLOUDFLARED_SHA256" "$cloudflared_path" | sha256sum --check --strict
+          install -d -m 0755 "$bin_dir"
+          install -m 0755 "$cloudflared_path" "$bin_dir/cloudflared"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Configure strict Cloudflare SSH transport
+        env:
+          MSI_SSH_KNOWN_HOSTS: ${{ secrets.MSI_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$MSI_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/known_hosts"
+
+          {
+            printf '%s\n' "Host msi-cloudflare"
+            printf '%s\n' "  HostName $MSI_SSH_HOST"
+            printf '%s\n' "  User $MSI_SSH_USER"
+            printf '%s\n' "  PreferredAuthentications password"
+            printf '%s\n' "  PubkeyAuthentication no"
+            printf '%s\n' "  KbdInteractiveAuthentication no"
+            printf '%s\n' "  StrictHostKeyChecking yes"
+            printf '%s\n' "  UserKnownHostsFile ~/.ssh/known_hosts"
+            printf '%s\n' "  ProxyCommand cloudflared access ssh --hostname %h"
+            printf '%s\n' "  ConnectTimeout 20"
+            printf '%s\n' "  ServerAliveInterval 15"
+            printf '%s\n' "  ServerAliveCountMax 2"
+          } > "$HOME/.ssh/config"
+          chmod 0600 "$HOME/.ssh/config"
+
+          askpass_path="$RUNNER_TEMP/msi-ssh-askpass"
+          # shellcheck disable=SC2016 # Preserve the variable for askpass runtime.
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'printf "%s\n" "$MSI_SSH_PASSWORD"' > "$askpass_path"
+          chmod 0700 "$askpass_path"
+
+      - name: Test public Cloudflare password SSH
+        env:
+          MSI_SSH_PASSWORD: ${{ secrets.MSI_SSH_PASSWORD }}
+          SSH_ASKPASS: ${{ runner.temp }}/msi-ssh-askpass
+          SSH_ASKPASS_REQUIRE: force
+          DISPLAY: ':0'
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016 # Expand identity commands on MSI, not the runner.
+          setsid --wait ssh msi-cloudflare '
+            set -eu
+            test "$(id -un)" = "msi-access"
+            if id -nG | tr " " "\n" | grep -Eq "^(sudo|docker)$"; then
+              echo "Unexpected privileged group membership" >&2
+              exit 1
+            fi
+            printf "MSI_CLOUDFLARE_PASSWORD_SSH_OK\n"
+          '
+
+      - name: Test public HTTP endpoints
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            --max-time 20 --output /dev/null \
+            https://msi.olivium.space
+          curl --fail --silent --show-error --location \
+            --max-time 20 --output /dev/null \
+            http://msi.olivium.space
+
+          msi_api_code="$(curl --silent --show-error --max-time 20 \
+            --output /dev/null --write-out '%{http_code}' \
+            https://app.jeeb.fds-1.com)"
+          test "$msi_api_code" = "401" || {
+            echo "::error::Expected protected API root to return 401; got $msi_api_code"
+            exit 1
+          }
+
+      - name: Publish summary
+        run: |
+          # shellcheck disable=SC2016 # Markdown backticks are intentional literals.
+          {
+            printf '%s\n' '## MSI Cloudflare access smoke'
+            printf '%s\n' ''
+            printf '%s\n' '- Public Cloudflare password SSH: passed'
+            printf '%s\n' '- SSH identity: `msi-access` (non-privileged)'
+            printf '%s\n' '- MSI HTTP/HTTPS: passed'
+            printf '%s\n' '- Protected API root: expected `401` received'
+            printf '%s\n' '- Cloudflare account or service token: not required'
+          } >> "$GITHUB_STEP_SUMMARY"

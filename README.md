@@ -79,6 +79,10 @@ curl http://localhost:5000/health/live
 | `verify-server.yml` | Schedule daily + manual | Diagnostic: Swarm, nginx, SSL, cloudflared status |
 | `jeeb-staging-edge-deploy.yml` | Manual, default branch only | Forward-only staging Worker/origin rollout with strict functional gates and retained audit snapshots |
 | `deployment-safety.yml` | PR + push to `main` | Enforce strict edge access, forward-only execution, and health gates |
+| `msi-cloudflare-ssh-smoke.yml` | Manual, default branch only | Verify non-admin password SSH through the public MSI Cloudflare Tunnel and check public HTTP endpoints |
+
+Colleague and CI access instructions for MSI are documented in
+[`deploy/msi/MSI-CLOUDFLARE-SSH-ACCESS.md`](deploy/msi/MSI-CLOUDFLARE-SSH-ACCESS.md).
 
 ### Service Deploy Workflows (jeeb-gateway, etc.)
 
@@ -141,6 +145,8 @@ Configure these via `gh secret set`:
 | `JEEB_STAGING_SSH_KNOWN_HOSTS` | Exact staging SSH host-key entry |
 | `CLOUDFLARE_API_TOKEN` | Scoped token for the staging Worker and Custom Domains |
 | `JEEB_STAGING_WSS_PROBE_MINT_KEY` | Staging-only HMAC key for minting a nonce-bound, non-privileged realtime probe descriptor |
+| `MSI_SSH_PASSWORD` | Shared password for the non-admin `msi-access` smoke identity |
+| `MSI_SSH_KNOWN_HOSTS` | Exact pinned host-key entry for `ssh-msi.olivium.space` |
 
 ### For Production Environment
 

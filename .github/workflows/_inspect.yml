@@ -1,0 +1,75 @@
+name: MSI Cloudflare SSH branch validation
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      MSI_SSH_PASSWORD: ${{ secrets.MSI_SSH_PASSWORD }}
+      MSI_SSH_KNOWN_HOSTS: ${{ secrets.MSI_SSH_KNOWN_HOSTS }}
+      CLOUDFLARED_VERSION: 2026.8.2
+      CLOUDFLARED_SHA256: fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2
+
+    steps:
+      - name: Install pinned cloudflared
+        run: |
+          set -euo pipefail
+          test -n "$MSI_SSH_PASSWORD"
+          test -n "$MSI_SSH_KNOWN_HOSTS"
+          cloudflared_path="$RUNNER_TEMP/cloudflared"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --output "$cloudflared_path" \
+            "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+          printf '%s  %s\n' "$CLOUDFLARED_SHA256" "$cloudflared_path" | sha256sum --check --strict
+          install -m 0755 "$cloudflared_path" /usr/local/bin/cloudflared
+
+      - name: Configure strict password SSH
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$MSI_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/known_hosts"
+          printf '%s\n' \
+            'Host msi-cloudflare' \
+            '  HostName ssh-msi.olivium.space' \
+            '  User msi-access' \
+            '  PreferredAuthentications password' \
+            '  PubkeyAuthentication no' \
+            '  KbdInteractiveAuthentication no' \
+            '  StrictHostKeyChecking yes' \
+            '  UserKnownHostsFile ~/.ssh/known_hosts' \
+            '  ProxyCommand cloudflared access ssh --hostname %h' > "$HOME/.ssh/config"
+          chmod 0600 "$HOME/.ssh/config"
+          # shellcheck disable=SC2016 # Preserve the variable for askpass runtime.
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'printf "%s\n" "$MSI_SSH_PASSWORD"' > "$RUNNER_TEMP/msi-ssh-askpass"
+          chmod 0700 "$RUNNER_TEMP/msi-ssh-askpass"
+
+      - name: Run public Cloudflare smoke
+        env:
+          SSH_ASKPASS: ${{ runner.temp }}/msi-ssh-askpass
+          SSH_ASKPASS_REQUIRE: force
+          DISPLAY: ':0'
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016 # Expand identity commands on MSI.
+          setsid --wait ssh msi-cloudflare '
+            set -eu
+            test "$(id -un)" = "msi-access"
+            if id -nG | tr " " "\n" | grep -Eq "^(sudo|docker)$"; then
+              exit 1
+            fi
+            printf "MSI_CLOUDFLARE_PASSWORD_SSH_OK\n"
+          '
+          curl --fail --silent --show-error --location \
+            --max-time 20 --output /dev/null https://msi.olivium.space
+          msi_api_code="$(curl --silent --show-error --max-time 20 \
+            --output /dev/null --write-out '%{http_code}' \
+            https://app.jeeb.fds-1.com)"
+          test "$msi_api_code" = "401"

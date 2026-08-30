@@ -183,4 +183,3 @@ fallback credentials; the workflow fails closed when either secret is absent.
 This workflow never modifies the server. To revoke shared access, the server
 owner must lock `msi-access` or rotate its password through an already-authorized
 operator session, then update `MSI_SSH_PASSWORD` if CI access should continue.
-

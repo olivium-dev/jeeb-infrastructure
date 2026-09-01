@@ -106,22 +106,21 @@ jobs:
             | grep -Fxq 192.168.2.20
           printf '%s\n' 'manager_host=verified'
 
-          unit=
-          for candidate in \
-            ephemeral-manager.service \
-            olivium-ephemeral-manager.service; do
-            if [ "$(systemctl show --property=LoadState --value "$candidate")" = loaded ]; then
-              [ -z "$unit" ] || {
-                echo '::error::More than one allowed manager unit is loaded.'
-                exit 1
-              }
-              unit=$candidate
-            fi
-          done
-          [ -n "$unit" ] || {
-            echo '::error::No allowed manager unit is loaded.'
+          mapfile -t manager_units < <(
+            systemctl list-unit-files --type=service --no-legend \
+              | awk '{ print $1 }' \
+              | grep -E \
+                '^([A-Za-z0-9@_.-]*ephemeral[A-Za-z0-9@_.-]*manager|[A-Za-z0-9@_.-]*manager[A-Za-z0-9@_.-]*ephemeral)[A-Za-z0-9@_.-]*\.service$' \
+              | sort -u
+          )
+          [ "${#manager_units[@]}" = 1 ] || {
+            printf 'manager_unit_candidate_count=%s\n' "${#manager_units[@]}"
+            printf 'manager_unit_candidate=%s\n' "${manager_units[@]:-none}"
+            echo '::error::Exactly one bounded ephemeral manager unit is required.'
             exit 1
           }
+          unit=${manager_units[0]}
+          [ "$(systemctl show --property=LoadState --value "$unit")" = loaded ]
           systemctl is-active --quiet "$unit"
           printf 'manager_unit=%s\n' "$unit"
 

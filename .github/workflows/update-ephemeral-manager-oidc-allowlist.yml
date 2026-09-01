@@ -171,6 +171,25 @@ jobs:
           done
           [ "${#matching_units[@]}" = 1 ] || {
             printf 'manager_config_identity_count=%s\n' "${#matching_units[@]}"
+            printf '%s\n' 'manager_runtime_inventory_begin'
+            systemctl list-units --type=service --state=running \
+              --no-legend --plain 2>/dev/null \
+              | awk '{ printf "manager_system_unit=%s\n", $1 }' \
+              | sort -u
+            systemctl --user list-units --type=service --state=running \
+              --no-legend --plain 2>/dev/null \
+              | awk '{ printf "manager_user_unit=%s\n", $1 }' \
+              | sort -u || true
+            if docker info >/dev/null 2>&1; then
+              docker ps --format \
+                'manager_container={{.Names}} image={{.Image}} ports={{.Ports}}' \
+                | sort -u
+            else
+              printf '%s\n' 'manager_docker_access=unavailable'
+            fi
+            ss -H -ltnp 'sport = :8080' 2>/dev/null \
+              | sed 's/^/manager_listener=/' || true
+            printf '%s\n' 'manager_runtime_inventory_end'
             echo '::error::Exactly one active manager config identity is required.'
             exit 1
           }

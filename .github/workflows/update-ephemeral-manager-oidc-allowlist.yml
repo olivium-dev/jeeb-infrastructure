@@ -197,6 +197,16 @@ jobs:
             for runtime_pid in "${runtime_pids[@]}"; do
               ps -p "$runtime_pid" -o pid=,ppid=,user=,comm= \
                 | awk '{ printf "manager_process=pid:%s,ppid:%s,user:%s,comm:%s\n", $1, $2, $3, $4 }'
+              parent_pid=$(ps -p "$runtime_pid" -o ppid= | tr -d ' ')
+              ps -p "$parent_pid" -o pid=,ppid=,user=,comm= \
+                | awk '{ printf "manager_parent_process=pid:%s,ppid:%s,user:%s,comm:%s\n", $1, $2, $3, $4 }'
+              while IFS= read -r process_argument; do
+                case "$process_argument" in
+                  *.dll | *.csproj)
+                    printf 'manager_process_artifact=%s\n' "$process_argument"
+                    ;;
+                esac
+              done < <(tr '\0' '\n' < "/proc/$runtime_pid/cmdline" 2>/dev/null || true)
               runtime_cwd=$(readlink "/proc/$runtime_pid/cwd" 2>/dev/null || true)
               printf 'manager_process_cwd=%s\n' "${runtime_cwd:-unavailable}"
             done

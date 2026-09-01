@@ -112,89 +112,77 @@ jobs:
           count_exact_in_file() {
             local path=$1 expected=$2 output status
             set +e
+            output=$(grep -Fxc -- "$expected" "$path" 2>/dev/null)
+            status=$?
+            set -e
+            if [ "$status" -le 1 ] && [[ "$output" =~ ^[0-9]+$ ]]; then
+              printf '%s' "$output"
+              return 0
+            fi
+            set +e
             output=$(sudo -n grep -Fxc -- "$expected" "$path" 2>/dev/null)
             status=$?
             set -e
-            [ "$status" -le 1 ] || return 2
-            printf '%s' "$output"
+            if [ "$status" -le 1 ] && [[ "$output" =~ ^[0-9]+$ ]]; then
+              printf '%s' "$output"
+              return 0
+            fi
+            return 2
           }
 
-          mapfile -t active_units < <(
-            systemctl list-units --type=service --state=running \
-              --no-legend --plain | awk '{ print $1 }' | sort -u
-          )
+          matching_scopes=()
           matching_units=()
           matching_files=()
-          for candidate_unit in "${active_units[@]}"; do
-            while IFS= read -r candidate_file; do
-              case "$candidate_file" in
-                /etc/*ephemeral* | \
-                /opt/*ephemeral* | \
-                /home/ec2-user/*ephemeral*) ;;
-                *) continue ;;
-              esac
-              if candidate_ref_count=$(count_exact_in_file \
-                  "$candidate_file" "$ref_line") \
-                && candidate_old_count=$(count_exact_in_file \
-                  "$candidate_file" "$old_line") \
-                && [ "$candidate_ref_count" = 1 ] \
-                && [ "$candidate_old_count" = 1 ]; then
-                matching_units+=("$candidate_unit")
-                matching_files+=("$candidate_file")
-              fi
-            done < <(
-              systemctl show --property=EnvironmentFiles --value \
-                "$candidate_unit" \
-                | tr ' ' '\n' | sed -n '\|^/|p' | sort -u
+          for candidate_scope in system user; do
+            candidate_systemctl=(systemctl)
+            if [ "$candidate_scope" = user ]; then
+              candidate_systemctl+=(--user)
+            fi
+            mapfile -t active_units < <(
+              "${candidate_systemctl[@]}" list-units --type=service \
+                --state=running --no-legend --plain 2>/dev/null \
+                | awk '{ print $1 }' | sort -u
             )
+            for candidate_unit in "${active_units[@]}"; do
+              while IFS= read -r candidate_file; do
+                case "$candidate_file" in
+                  /etc/*ephemeral* | \
+                  /opt/*ephemeral* | \
+                  /home/ec2-user/*ephemeral*) ;;
+                  *) continue ;;
+                esac
+                if candidate_ref_count=$(count_exact_in_file \
+                    "$candidate_file" "$ref_line") \
+                  && candidate_old_count=$(count_exact_in_file \
+                    "$candidate_file" "$old_line") \
+                  && [ "$candidate_ref_count" = 1 ] \
+                  && [ "$candidate_old_count" = 1 ]; then
+                  matching_scopes+=("$candidate_scope")
+                  matching_units+=("$candidate_unit")
+                  matching_files+=("$candidate_file")
+                fi
+              done < <(
+                "${candidate_systemctl[@]}" show \
+                  --property=EnvironmentFiles --value "$candidate_unit" \
+                  2>/dev/null \
+                  | tr ' ' '\n' | sed -n '\|^/|p' | sort -u
+              )
+            done
           done
           [ "${#matching_units[@]}" = 1 ] || {
             printf 'manager_config_identity_count=%s\n' "${#matching_units[@]}"
-            if sudo -n true >/dev/null 2>&1; then
-              printf '%s\n' 'manager_noninteractive_root=yes'
-            else
-              printf '%s\n' 'manager_noninteractive_root=no'
-            fi
-            set +e
-            scoped_grep_output=$(sudo -n grep -Fxc -- \
-              impossible-manager-marker /dev/null 2>/dev/null)
-            scoped_grep_status=$?
-            set -e
-            if [ "$scoped_grep_output" = 0 ] \
-              && [ "$scoped_grep_status" = 1 ]; then
-              printf '%s\n' 'manager_scoped_grep=yes'
-            else
-              printf '%s\n' 'manager_scoped_grep=no'
-            fi
-            runtime_candidate_count=0
-            for candidate_unit in "${active_units[@]}"; do
-              exec_start=$(systemctl show --property=ExecStart --value \
-                "$candidate_unit")
-              if [[ "$exec_start" =~ [Ee]phemeral.*[Mm]anager \
-                || "$exec_start" =~ [Mm]anager.*[Ee]phemeral ]]; then
-                runtime_candidate_count=$((runtime_candidate_count + 1))
-                working_directory=$(systemctl show \
-                  --property=WorkingDirectory --value "$candidate_unit")
-                environment_files=$(systemctl show \
-                  --property=EnvironmentFiles --value "$candidate_unit")
-                environment_file_count=$(printf '%s\n' "$environment_files" \
-                  | tr ' ' '\n' | sed -n '\|^/|p' | sort -u \
-                  | sed '/^[[:space:]]*$/d' | wc -l)
-                printf 'manager_runtime_candidate=%s\n' "$candidate_unit"
-                printf 'manager_runtime_working_directory=%s\n' \
-                  "${working_directory:-unset}"
-                printf 'manager_runtime_environment_file_count=%s\n' \
-                  "$environment_file_count"
-              fi
-            done
-            printf 'manager_runtime_candidate_count=%s\n' \
-              "$runtime_candidate_count"
             echo '::error::Exactly one active manager config identity is required.'
             exit 1
           }
+          scope=${matching_scopes[0]}
           unit=${matching_units[0]}
           env_file=${matching_files[0]}
-          systemctl is-active --quiet "$unit"
+          manager_systemctl=(systemctl)
+          if [ "$scope" = user ]; then
+            manager_systemctl+=(--user)
+          fi
+          "${manager_systemctl[@]}" is-active --quiet "$unit"
+          printf 'manager_unit_scope=%s\n' "$scope"
           printf 'manager_unit=%s\n' "$unit"
           printf 'manager_environment_file=%s\n' "$env_file"
           curl -fsS --max-time 5 \
@@ -204,7 +192,7 @@ jobs:
           count_exact() {
             local expected=$1
             if ! count_exact_in_file "$env_file" "$expected"; then
-              echo '::error::Unable to read the manager environment file with scoped sudo.'
+              echo '::error::Unable to read the manager environment file.'
               exit 1
             fi
           }
@@ -217,15 +205,34 @@ jobs:
           [ "$old_count" = 1 ]
           [ "$new_count" = 0 ]
 
-          sudo -n sed -i \
-            "s|^$old_line\$|$new_line|" "$env_file"
+          mutation_mode=
+          if [ "$scope" = user ] && [ -w "$env_file" ]; then
+            mutation_mode=owned-user-service
+          elif [ "$scope" = system ] \
+            && sudo -n true >/dev/null 2>&1; then
+            mutation_mode=root-system-service
+          else
+            echo '::error::Config write and service restart authority are not both available.'
+            exit 1
+          fi
+          printf 'manager_mutation_authority=%s\n' "$mutation_mode"
+
+          if [ "$mutation_mode" = owned-user-service ]; then
+            sed -i "s|^$old_line\$|$new_line|" "$env_file"
+          else
+            sudo -n sed -i "s|^$old_line\$|$new_line|" "$env_file"
+          fi
 
           [ "$(count_exact "$old_line")" = 0 ]
           [ "$(count_exact "$new_line")" = 1 ]
-          sudo -n systemctl restart "$unit"
+          if [ "$mutation_mode" = owned-user-service ]; then
+            "${manager_systemctl[@]}" restart "$unit"
+          else
+            sudo -n systemctl restart "$unit"
+          fi
 
           for attempt in $(seq 1 30); do
-            if systemctl is-active --quiet "$unit" \
+            if "${manager_systemctl[@]}" is-active --quiet "$unit" \
               && curl -fsS --max-time 5 \
                 http://127.0.0.1:8080/health/ready >/dev/null; then
               printf '%s\n' 'Ephemeral manager OIDC allowlist updated and healthy.'

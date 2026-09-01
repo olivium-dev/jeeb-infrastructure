@@ -13,8 +13,6 @@ concurrency:
 env:
   OLD_SHARED_WORKFLOW_SHA: c1a1a04e0db46816b865fd8d7d979f36fd57514e
   NEW_SHARED_WORKFLOW_SHA: 3b9b67e2b4fd9846979ae3c039ec03575f41dfc8
-  MANAGER_UNIT: olivium-ephemeral-manager.service
-  MANAGER_ENV_FILE: /etc/olivium-ephemeral-manager/manager.env
   SHARED_WORKFLOW_REF: olivium-dev/shared-github-actions/.github/workflows/deploy-jeeb-operational.yml@refs/heads/main
 
 jobs:
@@ -91,17 +89,13 @@ jobs:
         run: |
           set -euo pipefail
           ssh jeeb-staging bash -s -- \
-            "$MANAGER_UNIT" \
-            "$MANAGER_ENV_FILE" \
             "$SHARED_WORKFLOW_REF" \
             "$OLD_SHARED_WORKFLOW_SHA" \
             "$NEW_SHARED_WORKFLOW_SHA" <<'REMOTE'
           set -euo pipefail
-          unit=$1
-          env_file=$2
-          workflow_ref=$3
-          old_sha=$4
-          new_sha=$5
+          workflow_ref=$1
+          old_sha=$2
+          new_sha=$3
 
           [[ "$old_sha" =~ ^[0-9a-f]{40}$ ]]
           [[ "$new_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -110,24 +104,80 @@ jobs:
           ip -4 -o addr show scope global \
             | awk '{ split($4, address, "/"); print address[1] }' \
             | grep -Fxq 192.168.2.20
+          printf '%s\n' 'manager_host=verified'
+
+          unit=
+          for candidate in \
+            ephemeral-manager.service \
+            olivium-ephemeral-manager.service; do
+            if [ "$(systemctl show --property=LoadState --value "$candidate")" = loaded ]; then
+              [ -z "$unit" ] || {
+                echo '::error::More than one allowed manager unit is loaded.'
+                exit 1
+              }
+              unit=$candidate
+            fi
+          done
+          [ -n "$unit" ] || {
+            echo '::error::No allowed manager unit is loaded.'
+            exit 1
+          }
           systemctl is-active --quiet "$unit"
-          systemctl show --property=EnvironmentFiles --value "$unit" \
-            | grep -Fq "$env_file"
+          printf 'manager_unit=%s\n' "$unit"
+
+          environment_files=$(systemctl show \
+            --property=EnvironmentFiles --value "$unit")
+          [ "$(printf '%s\n' "$environment_files" | sed '/^[[:space:]]*$/d' | wc -l)" = 1 ] || {
+            echo '::error::Manager must use exactly one environment file.'
+            exit 1
+          }
+          env_file=$(printf '%s\n' "$environment_files" | awk 'NF { print $1 }')
+          case "$env_file" in
+            /etc/ephemeral-manager/manager.env | \
+            /etc/olivium-ephemeral-manager/manager.env | \
+            /etc/olivium-ephemeral-manager/.env | \
+            /opt/olivium-ephemeral-manager/.env | \
+            /home/ec2-user/ephemeral-manager/.env | \
+            /home/ec2-user/olivium-ephemeral-manager/.env) ;;
+            *)
+              echo '::error::Manager environment file is outside the allowed paths.'
+              exit 1
+              ;;
+          esac
+          printf 'manager_environment_file=%s\n' "$env_file"
           curl -fsS --max-time 5 \
             http://127.0.0.1:8080/health/ready >/dev/null
+          printf '%s\n' 'manager_incumbent_health=verified'
 
           ref_line="AUTOMATION__ALLOWEDWORKFLOWS__0__REF=$workflow_ref"
           old_line="AUTOMATION__ALLOWEDWORKFLOWS__0__SHA=$old_sha"
           new_line="AUTOMATION__ALLOWEDWORKFLOWS__0__SHA=$new_sha"
-          [ "$(sudo -n grep -Fxc -- "$ref_line" "$env_file" || true)" = 1 ]
-          [ "$(sudo -n grep -Fxc -- "$old_line" "$env_file" || true)" = 1 ]
-          [ "$(sudo -n grep -Fxc -- "$new_line" "$env_file" || true)" = 0 ]
+          count_exact() {
+            local expected=$1 output status
+            set +e
+            output=$(sudo -n grep -Fxc -- "$expected" "$env_file" 2>/dev/null)
+            status=$?
+            set -e
+            [ "$status" -le 1 ] || {
+              echo '::error::Unable to read the manager environment file with scoped sudo.'
+              exit 1
+            }
+            printf '%s' "$output"
+          }
+          ref_count=$(count_exact "$ref_line")
+          old_count=$(count_exact "$old_line")
+          new_count=$(count_exact "$new_line")
+          printf 'manager_allowlist_counts=ref:%s,old:%s,new:%s\n' \
+            "$ref_count" "$old_count" "$new_count"
+          [ "$ref_count" = 1 ]
+          [ "$old_count" = 1 ]
+          [ "$new_count" = 0 ]
 
           sudo -n sed -i \
             "s|^$old_line\$|$new_line|" "$env_file"
 
-          [ "$(sudo -n grep -Fxc -- "$old_line" "$env_file" || true)" = 0 ]
-          [ "$(sudo -n grep -Fxc -- "$new_line" "$env_file" || true)" = 1 ]
+          [ "$(count_exact "$old_line")" = 0 ]
+          [ "$(count_exact "$new_line")" = 1 ]
           sudo -n systemctl restart "$unit"
 
           for attempt in $(seq 1 30); do

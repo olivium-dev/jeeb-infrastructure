@@ -150,6 +150,45 @@ jobs:
           done
           [ "${#matching_units[@]}" = 1 ] || {
             printf 'manager_config_identity_count=%s\n' "${#matching_units[@]}"
+            if sudo -n true >/dev/null 2>&1; then
+              printf '%s\n' 'manager_noninteractive_root=yes'
+            else
+              printf '%s\n' 'manager_noninteractive_root=no'
+            fi
+            set +e
+            scoped_grep_output=$(sudo -n grep -Fxc -- \
+              impossible-manager-marker /dev/null 2>/dev/null)
+            scoped_grep_status=$?
+            set -e
+            if [ "$scoped_grep_output" = 0 ] \
+              && [ "$scoped_grep_status" = 1 ]; then
+              printf '%s\n' 'manager_scoped_grep=yes'
+            else
+              printf '%s\n' 'manager_scoped_grep=no'
+            fi
+            runtime_candidate_count=0
+            for candidate_unit in "${active_units[@]}"; do
+              exec_start=$(systemctl show --property=ExecStart --value \
+                "$candidate_unit")
+              if [[ "$exec_start" =~ [Ee]phemeral.*[Mm]anager \
+                || "$exec_start" =~ [Mm]anager.*[Ee]phemeral ]]; then
+                runtime_candidate_count=$((runtime_candidate_count + 1))
+                working_directory=$(systemctl show \
+                  --property=WorkingDirectory --value "$candidate_unit")
+                environment_files=$(systemctl show \
+                  --property=EnvironmentFiles --value "$candidate_unit")
+                environment_file_count=$(printf '%s\n' "$environment_files" \
+                  | tr ' ' '\n' | sed -n '\|^/|p' | sort -u \
+                  | sed '/^[[:space:]]*$/d' | wc -l)
+                printf 'manager_runtime_candidate=%s\n' "$candidate_unit"
+                printf 'manager_runtime_working_directory=%s\n' \
+                  "${working_directory:-unset}"
+                printf 'manager_runtime_environment_file_count=%s\n' \
+                  "$environment_file_count"
+              fi
+            done
+            printf 'manager_runtime_candidate_count=%s\n' \
+              "$runtime_candidate_count"
             echo '::error::Exactly one active manager config identity is required.'
             exit 1
           }

@@ -1,0 +1,152 @@
+name: update-ephemeral-manager-oidc-allowlist
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jeeb-staging-ephemeral-manager-oidc-allowlist
+  cancel-in-progress: false
+
+env:
+  OLD_SHARED_WORKFLOW_SHA: c1a1a04e0db46816b865fd8d7d979f36fd57514e
+  NEW_SHARED_WORKFLOW_SHA: 3b9b67e2b4fd9846979ae3c039ec03575f41dfc8
+  MANAGER_UNIT: olivium-ephemeral-manager.service
+  MANAGER_ENV_FILE: /etc/olivium-ephemeral-manager/manager.env
+  SHARED_WORKFLOW_REF: olivium-dev/shared-github-actions/.github/workflows/deploy-jeeb-operational.yml@refs/heads/main
+
+jobs:
+  default-branch-gate:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Refuse non-default-branch dispatch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF_TYPE" = branch ]
+          [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ] || {
+            echo '::error::The manager allowlist may be updated only from the default branch.'
+            exit 1
+          }
+
+  update:
+    needs: default-branch-gate
+    runs-on: ubuntu-22.04
+    environment: staging
+    steps:
+      - name: Check out the exact default-branch revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install pinned cloudflared and configure strict SSH
+        env:
+          SSH_HOST: ${{ secrets.JEEB_STAGING_SSH_HOST }}
+          SSH_USER: ${{ secrets.JEEB_STAGING_DEPLOY_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.JEEB_STAGING_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.JEEB_STAGING_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?JEEB_STAGING_SSH_HOST is required}"
+          : "${SSH_USER:?JEEB_STAGING_DEPLOY_USER is required}"
+          : "${SSH_PRIVATE_KEY:?JEEB_STAGING_SSH_PRIVATE_KEY is required}"
+          : "${SSH_KNOWN_HOSTS:?JEEB_STAGING_SSH_KNOWN_HOSTS is required}"
+
+          package=$RUNNER_TEMP/cloudflared-linux-amd64.deb
+          curl -fsSL --retry 3 -o "$package" \
+            https://github.com/cloudflare/cloudflared/releases/download/2026.8.2/cloudflared-linux-amd64.deb
+          printf '%s  %s\n' \
+            c805c7c8102190c04dfc16e3b4cc4acc9007d5b19b3afbcd608ea6fed7645a43 \
+            "$package" | sha256sum --check --status
+          sudo dpkg -i "$package"
+
+          install -d -m 700 "$HOME/.ssh"
+          if printf '%s' "$SSH_PRIVATE_KEY" | grep -q '^-----BEGIN'; then
+            printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          else
+            printf '%s' "$SSH_PRIVATE_KEY" \
+              | base64 --decode > "$HOME/.ssh/id_ed25519"
+          fi
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$SSH_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null || {
+            echo '::error::Known-hosts does not pin the staging SSH host.'
+            exit 1
+          }
+          {
+            printf '%s\n' 'Host jeeb-staging'
+            printf '  HostName %s\n' "$SSH_HOST"
+            printf '  User %s\n' "$SSH_USER"
+            printf '%s\n' \
+              '  IdentityFile ~/.ssh/id_ed25519' \
+              '  ProxyCommand cloudflared access ssh --hostname %h' \
+              '  UserKnownHostsFile ~/.ssh/known_hosts' \
+              '  StrictHostKeyChecking yes'
+          } > "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
+
+      - name: Replace only the exact obsolete workflow SHA and restart once
+        run: |
+          set -euo pipefail
+          ssh jeeb-staging bash -s -- \
+            "$MANAGER_UNIT" \
+            "$MANAGER_ENV_FILE" \
+            "$SHARED_WORKFLOW_REF" \
+            "$OLD_SHARED_WORKFLOW_SHA" \
+            "$NEW_SHARED_WORKFLOW_SHA" <<'REMOTE'
+          set -euo pipefail
+          unit=$1
+          env_file=$2
+          workflow_ref=$3
+          old_sha=$4
+          new_sha=$5
+
+          [[ "$old_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$new_sha" =~ ^[0-9a-f]{40}$ ]]
+          [ "$old_sha" != "$new_sha" ]
+          [ "$(hostname -s)" = olivium-ephemerals ]
+          ip -4 -o addr show scope global \
+            | awk '{ split($4, address, "/"); print address[1] }' \
+            | grep -Fxq 192.168.2.20
+          systemctl is-active --quiet "$unit"
+          systemctl show --property=EnvironmentFiles --value "$unit" \
+            | grep -Fq "$env_file"
+          curl -fsS --max-time 5 \
+            http://127.0.0.1:8080/health/ready >/dev/null
+
+          ref_line="AUTOMATION__ALLOWEDWORKFLOWS__0__REF=$workflow_ref"
+          old_line="AUTOMATION__ALLOWEDWORKFLOWS__0__SHA=$old_sha"
+          new_line="AUTOMATION__ALLOWEDWORKFLOWS__0__SHA=$new_sha"
+          [ "$(sudo -n grep -Fxc -- "$ref_line" "$env_file" || true)" = 1 ]
+          [ "$(sudo -n grep -Fxc -- "$old_line" "$env_file" || true)" = 1 ]
+          [ "$(sudo -n grep -Fxc -- "$new_line" "$env_file" || true)" = 0 ]
+
+          sudo -n sed -i \
+            "s|^$old_line\$|$new_line|" "$env_file"
+
+          [ "$(sudo -n grep -Fxc -- "$old_line" "$env_file" || true)" = 0 ]
+          [ "$(sudo -n grep -Fxc -- "$new_line" "$env_file" || true)" = 1 ]
+          sudo -n systemctl restart "$unit"
+
+          for attempt in $(seq 1 30); do
+            if systemctl is-active --quiet "$unit" \
+              && curl -fsS --max-time 5 \
+                http://127.0.0.1:8080/health/ready >/dev/null; then
+              printf '%s\n' 'Ephemeral manager OIDC allowlist updated and healthy.'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo '::error::Manager did not become healthy with the new exact allowlist.'
+          exit 1
+          REMOTE
+
+      - name: Verify the public manager health endpoint
+        run: |
+          set -euo pipefail
+          curl -fsS --proto '=https' --tlsv1.2 \
+            --connect-timeout 5 --max-time 15 \
+            https://ephemeral.fds-8.space/health/ready >/dev/null
+          printf '%s\n' 'Public ephemeral manager health verified.'

@@ -106,62 +106,68 @@ jobs:
             | grep -Fxq 192.168.2.20
           printf '%s\n' 'manager_host=verified'
 
-          mapfile -t manager_units < <(
-            systemctl list-unit-files --type=service --no-legend \
-              | awk '{ print $1 }' \
-              | grep -E \
-                '^([A-Za-z0-9@_.-]*ephemeral[A-Za-z0-9@_.-]*manager|[A-Za-z0-9@_.-]*manager[A-Za-z0-9@_.-]*ephemeral)[A-Za-z0-9@_.-]*\.service$' \
-              | sort -u
+          ref_line="AUTOMATION__ALLOWEDWORKFLOWS__0__REF=$workflow_ref"
+          old_line="AUTOMATION__ALLOWEDWORKFLOWS__0__SHA=$old_sha"
+          new_line="AUTOMATION__ALLOWEDWORKFLOWS__0__SHA=$new_sha"
+          count_exact_in_file() {
+            local path=$1 expected=$2 output status
+            set +e
+            output=$(sudo -n grep -Fxc -- "$expected" "$path" 2>/dev/null)
+            status=$?
+            set -e
+            [ "$status" -le 1 ] || return 2
+            printf '%s' "$output"
+          }
+
+          mapfile -t active_units < <(
+            systemctl list-units --type=service --state=running \
+              --no-legend --plain | awk '{ print $1 }' | sort -u
           )
-          [ "${#manager_units[@]}" = 1 ] || {
-            printf 'manager_unit_candidate_count=%s\n' "${#manager_units[@]}"
-            printf 'manager_unit_candidate=%s\n' "${manager_units[@]:-none}"
-            echo '::error::Exactly one bounded ephemeral manager unit is required.'
+          matching_units=()
+          matching_files=()
+          for candidate_unit in "${active_units[@]}"; do
+            while IFS= read -r candidate_file; do
+              case "$candidate_file" in
+                /etc/*ephemeral* | \
+                /opt/*ephemeral* | \
+                /home/ec2-user/*ephemeral*) ;;
+                *) continue ;;
+              esac
+              if candidate_ref_count=$(count_exact_in_file \
+                  "$candidate_file" "$ref_line") \
+                && candidate_old_count=$(count_exact_in_file \
+                  "$candidate_file" "$old_line") \
+                && [ "$candidate_ref_count" = 1 ] \
+                && [ "$candidate_old_count" = 1 ]; then
+                matching_units+=("$candidate_unit")
+                matching_files+=("$candidate_file")
+              fi
+            done < <(
+              systemctl show --property=EnvironmentFiles --value \
+                "$candidate_unit" \
+                | tr ' ' '\n' | sed -n '\|^/|p' | sort -u
+            )
+          done
+          [ "${#matching_units[@]}" = 1 ] || {
+            printf 'manager_config_identity_count=%s\n' "${#matching_units[@]}"
+            echo '::error::Exactly one active manager config identity is required.'
             exit 1
           }
-          unit=${manager_units[0]}
-          [ "$(systemctl show --property=LoadState --value "$unit")" = loaded ]
+          unit=${matching_units[0]}
+          env_file=${matching_files[0]}
           systemctl is-active --quiet "$unit"
           printf 'manager_unit=%s\n' "$unit"
-
-          environment_files=$(systemctl show \
-            --property=EnvironmentFiles --value "$unit")
-          [ "$(printf '%s\n' "$environment_files" | sed '/^[[:space:]]*$/d' | wc -l)" = 1 ] || {
-            echo '::error::Manager must use exactly one environment file.'
-            exit 1
-          }
-          env_file=$(printf '%s\n' "$environment_files" | awk 'NF { print $1 }')
-          case "$env_file" in
-            /etc/ephemeral-manager/manager.env | \
-            /etc/olivium-ephemeral-manager/manager.env | \
-            /etc/olivium-ephemeral-manager/.env | \
-            /opt/olivium-ephemeral-manager/.env | \
-            /home/ec2-user/ephemeral-manager/.env | \
-            /home/ec2-user/olivium-ephemeral-manager/.env) ;;
-            *)
-              echo '::error::Manager environment file is outside the allowed paths.'
-              exit 1
-              ;;
-          esac
           printf 'manager_environment_file=%s\n' "$env_file"
           curl -fsS --max-time 5 \
             http://127.0.0.1:8080/health/ready >/dev/null
           printf '%s\n' 'manager_incumbent_health=verified'
 
-          ref_line="AUTOMATION__ALLOWEDWORKFLOWS__0__REF=$workflow_ref"
-          old_line="AUTOMATION__ALLOWEDWORKFLOWS__0__SHA=$old_sha"
-          new_line="AUTOMATION__ALLOWEDWORKFLOWS__0__SHA=$new_sha"
           count_exact() {
-            local expected=$1 output status
-            set +e
-            output=$(sudo -n grep -Fxc -- "$expected" "$env_file" 2>/dev/null)
-            status=$?
-            set -e
-            [ "$status" -le 1 ] || {
+            local expected=$1
+            if ! count_exact_in_file "$env_file" "$expected"; then
               echo '::error::Unable to read the manager environment file with scoped sudo.'
               exit 1
-            }
-            printf '%s' "$output"
+            fi
           }
           ref_count=$(count_exact "$ref_line")
           old_count=$(count_exact "$old_line")

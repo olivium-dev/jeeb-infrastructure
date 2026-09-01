@@ -189,6 +189,17 @@ jobs:
             fi
             ss -H -ltnp 'sport = :8080' 2>/dev/null \
               | sed 's/^/manager_listener=/' || true
+            mapfile -t runtime_pids < <(
+              ps -eo pid=,user=,comm=,args= --sort=pid \
+                | awk 'tolower($0) ~ /ephemeral|dotnet|8080/ { print $1 }' \
+                | sort -nu
+            )
+            for runtime_pid in "${runtime_pids[@]}"; do
+              ps -p "$runtime_pid" -o pid=,ppid=,user=,comm= \
+                | awk '{ printf "manager_process=pid:%s,ppid:%s,user:%s,comm:%s\n", $1, $2, $3, $4 }'
+              runtime_cwd=$(readlink "/proc/$runtime_pid/cwd" 2>/dev/null || true)
+              printf 'manager_process_cwd=%s\n' "${runtime_cwd:-unavailable}"
+            done
             printf '%s\n' 'manager_runtime_inventory_end'
             echo '::error::Exactly one active manager config identity is required.'
             exit 1

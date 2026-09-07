@@ -202,6 +202,11 @@ def offer_local_image(raw, entry, rows):
 
 
 def builder_contract(env, container):
+    docker_cmd = ["python", "-m", "app.main", "--host", "0.0.0.0", "--port", "8000"]
+    # Swarm may materialize Docker image defaults into Command/Args/Dir.
+    # Presence alone cannot classify a real override; do not serialize values.
+    runtime_present = {key: bool(container.get(key)) for key in
+                       ("Mounts", "Configs", "Secrets", "Command", "Args", "Dir")}
     individual = all(env.get(key) for key in ("DB_HOST", "DB_NAME", "DB_USERNAME", "DB_PASSWORD"))
     if individual:
         host, database = env["DB_HOST"], env["DB_NAME"]
@@ -226,6 +231,12 @@ def builder_contract(env, container):
                              "source_is_scoped_staging_path": str(mount.get("Source", "")).startswith("/opt/jeeb-staging-")})
     configured = [part.strip() for part in env.get("TEMPLATE_JSON_FILES", "").split(",") if part.strip()]
     return {"database_source": source, "database_target_unambiguous": known,
+            "database_components_nonempty": {key: bool(env.get(key)) for key in
+                ("DB_HOST", "DB_NAME", "DB_USERNAME", "DB_PASSWORD", "DB_PORT")},
+            "runtime_property_present": runtime_present,
+            "command_matches_docker_cmd": container.get("Command") == docker_cmd if runtime_present["Command"] else None,
+            "args_matches_docker_cmd": container.get("Args") == docker_cmd if runtime_present["Args"] else None,
+            "dir_matches_docker_workdir": container.get("Dir") == "/app" if runtime_present["Dir"] else None,
             "database_routing_overrides_absent": routing_clear,
             "database_host_matches_staging": host == "192.168.2.20" if known else None,
             "database_port_matches_staging": int(port) == 5432 if known else None,

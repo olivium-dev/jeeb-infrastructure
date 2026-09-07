@@ -47,6 +47,42 @@ class InventoryTests(unittest.TestCase):
         self.assertFalse(result["database_name_matches_staging"])
         self.assertNotIn("production", json.dumps(result))
 
+    def test_builder_partial_components_and_absent_runtime_shape_are_not_defaults(self):
+        result = inventory.builder_contract({"DB_PASSWORD": CANARY, "DB_PORT": "5432"}, {})
+        self.assertEqual(result["database_components_nonempty"], {
+            "DB_HOST": False, "DB_NAME": False, "DB_USERNAME": False,
+            "DB_PASSWORD": True, "DB_PORT": True})
+        self.assertEqual(result["database_source"], "DATABASE_URL")
+        self.assertFalse(any(result["runtime_property_present"].values()))
+        for key in ("command_matches_docker_cmd", "args_matches_docker_cmd", "dir_matches_docker_workdir"):
+            self.assertIsNone(result[key])
+        self.assertNotIn(CANARY, json.dumps(result))
+
+    def test_builder_materialized_command_args_and_dir_defaults(self):
+        default = ["python", "-m", "app.main", "--host", "0.0.0.0", "--port", "8000"]
+        for property_name, match_key in (("Command", "command_matches_docker_cmd"), ("Args", "args_matches_docker_cmd")):
+            result = inventory.builder_contract({}, {property_name: default, "Dir": "/app"})
+            self.assertTrue(result["runtime_property_present"][property_name])
+            self.assertTrue(result[match_key])
+            self.assertTrue(result["dir_matches_docker_workdir"])
+            self.assertNotIn("0.0.0.0", json.dumps(result))
+
+    def test_builder_runtime_config_metadata_never_exposes_values_names_or_paths(self):
+        container = {"Mounts": [{"Target": CANARY, "Source": CANARY}],
+                     "Configs": [{"ConfigName": CANARY}], "Secrets": [{"SecretName": CANARY}],
+                     "Command": [CANARY], "Args": [CANARY], "Dir": CANARY}
+        result = inventory.builder_contract({"DB_PASSWORD": CANARY}, container)
+        self.assertTrue(all(result["runtime_property_present"].values()))
+        for key in ("command_matches_docker_cmd", "args_matches_docker_cmd", "dir_matches_docker_workdir"):
+            self.assertFalse(result[key])
+        self.assertNotIn(CANARY, json.dumps(result))
+
+    def test_builder_component_nonempty_matches_python_environment_truthiness(self):
+        # Partial whitespace components are still nonempty to the runtime's all().
+        result = inventory.builder_contract({"DB_HOST": " ", "DB_PASSWORD": ""}, {})
+        self.assertTrue(result["database_components_nonempty"]["DB_HOST"])
+        self.assertFalse(result["database_components_nonempty"]["DB_PASSWORD"])
+
     def test_malformed_database_url_fails_closed_without_disclosure(self):
         for value in ("postgresql://[bad", "sqlite:///:memory:", "https://192.168.2.20/jeeb_form_builder_staging"):
             result = inventory.builder_contract({"DATABASE_URL": value}, {})

@@ -23,6 +23,15 @@ staging host/database match booleans, and reports fixed template/mount targets
 without source paths. It does not query a database, inspect submissions, read
 generated KYC content, read secret files, or fetch application logs.
 
+Builder target matching rejects query routing overrides, malformed ports and
+fragments; unknown/absent targets produce null match results. Percent-encoded
+database names stay literal, matching SQLAlchemy 2.0.27. The CDN projection
+checks only the exact upload bind mount and reports extra configuration/command
+overrides; absent storage settings remain unknown. Heartbeat projection checks
+the Redis host, port and database 4, with query overrides treated as ambiguous.
+Feedback datastore parsing remains unverified. The gateway's actual
+`Otel__Endpoint` setting is included only as a nonempty boolean.
+
 Monitoring inspection covers fixed service/container/systemd names only.
 Missing matches do not prove there is no differently named monitoring stack.
 Fixed loopback collector, Prometheus, Loki and Grafana GETs report HTTP status;

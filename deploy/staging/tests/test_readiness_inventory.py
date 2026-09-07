@@ -52,6 +52,82 @@ class InventoryTests(unittest.TestCase):
             result = inventory.builder_contract({"DATABASE_URL": value}, {})
             self.assertFalse(result["database_host_matches_staging"])
 
+    def test_postgres_query_routing_cannot_masquerade_as_staging(self):
+        base = "postgresql://user:password@192.168.2.20:5432/jeeb_form_builder_staging"
+        for query in ("host=other", "port=5433", "dbname=other", "database=other", "service=other",
+                      "hostaddr=192.168.2.50", "host=192.168.2.20&host=other", "%68ost=other",
+                      "options=other", "HOST=other", "unknown=other"):
+            with self.subTest(query=query):
+                result = inventory.builder_contract({"DATABASE_URL": base + "?" + query}, {})
+                self.assertFalse(result["database_target_unambiguous"])
+                self.assertIsNone(result["database_host_matches_staging"])
+                self.assertIsNone(result["database_name_matches_staging"])
+
+    def test_postgres_ports_fragments_and_absent_values_are_unknown(self):
+        for value in ("", "postgresql://u:p@192.168.2.20:bad/jeeb_form_builder_staging",
+                      "postgresql://u:p@192.168.2.20:0/jeeb_form_builder_staging",
+                      "postgresql://u:p@192.168.2.20:65536/jeeb_form_builder_staging",
+                      "postgresql://u:p@192.168.2.20:/jeeb_form_builder_staging",
+                      "postgresql://u:p@192.168.2.20/jeeb_form_builder_staging#other"):
+            result = inventory.builder_contract({"DATABASE_URL": value}, {})
+            self.assertFalse(result["database_target_unambiguous"])
+            self.assertIsNone(result["database_host_matches_staging"])
+        different_port = inventory.builder_contract({"DATABASE_URL": "postgresql://u:p@192.168.2.20:5433/jeeb_form_builder_staging"}, {})
+        self.assertTrue(different_port["database_target_unambiguous"])
+        self.assertFalse(different_port["database_port_matches_staging"])
+
+    def test_database_percent_encoding_matches_sqlalchemy_2027_literal_behavior(self):
+        result = inventory.builder_contract({"DATABASE_URL": "postgresql://u:p@192.168.2.20/jeeb%5fform_builder_staging"}, {})
+        self.assertTrue(result["database_target_unambiguous"])
+        self.assertFalse(result["database_name_matches_staging"])
+
+    def test_nonrouting_postgres_query_preserves_attestation(self):
+        result = inventory.builder_contract({"DATABASE_URL": "postgresql://u:p@192.168.2.20/jeeb_form_builder_staging?sslmode=require&connect_timeout=5"}, {})
+        self.assertTrue(result["database_target_unambiguous"])
+        self.assertTrue(result["database_port_matches_staging"])
+
+    def test_individual_bad_port_or_unescaped_credentials_are_unknown(self):
+        base = {"DB_HOST": "192.168.2.20", "DB_NAME": "jeeb_form_builder_staging", "DB_USERNAME": "user", "DB_PASSWORD": "secret"}
+        for update in ({"DB_PORT": "bad"}, {"DB_PORT": "0"}, {"DB_PASSWORD": "contains@host"}):
+            result = inventory.builder_contract({**base, **update}, {})
+            self.assertFalse(result["database_target_unambiguous"])
+            self.assertIsNone(result["database_host_matches_staging"])
+
+    def test_cdn_exact_mount_and_absent_config_are_not_inferred(self):
+        result = inventory.cdn_contract({}, {"Mounts": [{"Type": "bind", "Source": "/opt/jeeb-staging-cdn/uploads", "Target": "/app/uploads"}]})
+        self.assertTrue(result["exact_upload_bind_mount"])
+        self.assertIsNone(result["storage_provider_is_local"])
+        self.assertIsNone(result["storage_path_matches_mount"])
+        self.assertFalse(result["additional_config_or_command_override"])
+        for override in ({"Args": [CANARY]}, {"Command": [CANARY]}, {"Configs": [{"name": CANARY}]},
+                         {"Mounts": [{"Target": CANARY}]}):
+            result = inventory.cdn_contract({}, override)
+            self.assertTrue(result["additional_config_or_command_override"])
+            self.assertNotIn(CANARY, json.dumps(result))
+        for mounts in ([], [{"Type": "bind", "Source": CANARY, "Target": "/app/uploads"}],
+                       [{"Type": "bind", "Source": "/opt/jeeb-staging-cdn/uploads", "Target": "/app/uploads", "ReadOnly": True}]):
+            result = inventory.cdn_contract({}, {"Mounts": mounts})
+            self.assertIsNot(result["exact_upload_bind_mount"], True)
+            self.assertNotIn(CANARY, json.dumps(result))
+
+    def test_heartbeat_redis_query_overrides_and_malformed_ports_are_unknown(self):
+        base = "redis://user:" + CANARY + "@192.168.2.20:6379/4"
+        good = inventory.heartbeat_contract({"REDIS_URL": base})
+        self.assertTrue(good["redis_database_matches_staging"])
+        self.assertTrue(good["redis_host_matches_staging"])
+        self.assertNotIn(CANARY, json.dumps(good))
+        for value in ("", base + "?db=0", base + "?%64b=0", base + "#other", "redis://192.168.2.20:bad/4", "redis://192.168.2.20:0/4"):
+            result = inventory.heartbeat_contract({"REDIS_URL": value})
+            self.assertFalse(result["redis_target_unambiguous"])
+            self.assertIsNone(result["redis_database_matches_staging"])
+
+    def test_gateway_actual_otel_key_is_boolean_only(self):
+        raw = service("jeeb-staging-jeeb-gateway")
+        raw["Spec"]["TaskTemplate"]["ContainerSpec"]["Env"].append("Otel__Endpoint=" + CANARY)
+        result = inventory.sanitize_service("jeeb-staging-jeeb-gateway", raw)
+        self.assertTrue(result["telemetry_configured"]["Otel__Endpoint"])
+        self.assertNotIn(CANARY, json.dumps(result))
+
     def test_duplicate_runtime_key_is_rejected(self):
         with self.assertRaises(inventory.DiagnosticError):
             inventory.environment(["DATABASE_URL=a", "DATABASE_URL=" + CANARY])

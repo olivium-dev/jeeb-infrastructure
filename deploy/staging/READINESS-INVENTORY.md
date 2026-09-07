@@ -43,6 +43,16 @@ are serialized. This adds read-only projected inspect calls, not container exec,
 pulls, registry lookup, remote writes or additional deployment authority. Existing
 service-spec/task-reference fields retain their original independent meaning.
 
+Builder also reports nonempty booleans for the five fixed DB_* component keys,
+and presence booleans for Mounts/Configs/Secrets/Command/Args/Dir from the existing
+service inspect. Command and Args each get an exact-equality boolean against the
+reviewed Docker CMD; Dir is compared with `/app`. Absent/empty properties produce
+null default-match results, never inferred equality. This distinguishes possible
+materialized Docker defaults from genuine overrides without revealing values,
+config/secret names or token paths. Component nonempty uses the application's
+Python truthiness, so whitespace-only strings are still reported as nonempty.
+These are observations, not permission to retry a rejected builder deployment.
+
 Builder target matching rejects query routing overrides, malformed ports and
 fragments; unknown/absent targets produce null match results. Percent-encoded
 database names stay literal, matching SQLAlchemy 2.0.27. The CDN projection

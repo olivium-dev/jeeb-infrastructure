@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/deployment-safety.yml'
       - '.github/workflows/jeeb-staging-edge-deploy.yml'
+      - '.github/workflows/jeeb-staging-readiness-inventory.yml'
       - '.github/workflows/staging-edge-contract.yml'
       - 'deploy/msi/jeeb-cms/**'
       - 'deploy/staging/**'
@@ -15,6 +16,7 @@ on:
     paths:
       - '.github/workflows/deployment-safety.yml'
       - '.github/workflows/jeeb-staging-edge-deploy.yml'
+      - '.github/workflows/jeeb-staging-readiness-inventory.yml'
       - '.github/workflows/staging-edge-contract.yml'
       - 'deploy/msi/jeeb-cms/**'
       - 'deploy/staging/**'

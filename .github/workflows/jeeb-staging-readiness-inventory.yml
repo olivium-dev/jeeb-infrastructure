@@ -1,0 +1,75 @@
+name: Jeeb staging read-only readiness inventory
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jeeb-staging-readiness-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.ref_protected && github.actor == 'oudaykhaled' && github.triggering_actor == 'oudaykhaled' }}
+    runs-on: ubuntu-22.04
+    environment: staging
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify diagnostic contracts
+        run: python3 -m unittest discover -s deploy/staging/tests -p test_readiness_inventory.py -v
+      - name: Prepare pinned user-space transport
+        env:
+          SSH_HOST: ${{ secrets.JEEB_STAGING_SSH_HOST }}
+          SSH_USER: ${{ secrets.JEEB_STAGING_DEPLOY_USER }}
+          SSH_KEY: ${{ secrets.JEEB_STAGING_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.JEEB_STAGING_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REPOSITORY" = olivium-dev/jeeb-infrastructure ]
+          [ "$SSH_HOST" = jeeb-staging-ssh.fds-1.com ]
+          [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}$ ]]
+          [ -n "$SSH_KEY" ] && [ -n "$SSH_KNOWN_HOSTS" ]
+          transport="$RUNNER_TEMP/jeeb-readiness-transport"
+          install -d -m 700 "$transport"
+          curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 10 --max-time 60 \
+            https://github.com/cloudflare/cloudflared/releases/download/2026.8.2/cloudflared-linux-amd64 \
+            -o "$transport/cloudflared"
+          printf '%s  %s\n' fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2 \
+            "$transport/cloudflared" | sha256sum --check --strict
+          chmod 700 "$transport/cloudflared"
+          if [[ "$SSH_KEY" == *"-----BEGIN "* ]]; then
+            printf '%s\n' "$SSH_KEY" > "$transport/key"
+          else
+            printf '%s' "$SSH_KEY" | base64 --decode > "$transport/key"
+          fi
+          chmod 600 "$transport/key"
+          ssh-keygen -y -f "$transport/key" >/dev/null
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$transport/known_hosts"
+          chmod 600 "$transport/known_hosts"
+          ssh-keygen -F "$SSH_HOST" -f "$transport/known_hosts" >/dev/null
+          {
+            printf '%s\n' 'Host jeeb-staging-readiness'
+            printf '  HostName %s\n  User %s\n' "$SSH_HOST" "$SSH_USER"
+            printf '  IdentityFile %s/key\n' "$transport"
+            printf '  UserKnownHostsFile %s/known_hosts\n' "$transport"
+            printf '  ProxyCommand %s/cloudflared access ssh --hostname %%h\n' "$transport"
+            printf '%s\n' '  IdentitiesOnly yes' '  BatchMode yes' \
+              '  StrictHostKeyChecking yes' '  ConnectTimeout 20' \
+              '  ServerAliveInterval 10' '  ServerAliveCountMax 2'
+          } > "$transport/config"
+          chmod 600 "$transport/config"
+      - name: Collect fixed read-only staging evidence
+        run: |
+          set -euo pipefail
+          printf 'source_commit=%s\n' "$GITHUB_SHA"
+          ssh -F "$RUNNER_TEMP/jeeb-readiness-transport/config" \
+            jeeb-staging-readiness python3 - \
+            < deploy/staging/scripts/readiness-inventory.py
+      - name: Remove exact runner credential files
+        if: always()
+        run: |
+          transport="$RUNNER_TEMP/jeeb-readiness-transport"
+          rm -f -- "$transport/key" "$transport/known_hosts" "$transport/config"

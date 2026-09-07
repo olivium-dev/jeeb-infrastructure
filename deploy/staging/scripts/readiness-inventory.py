@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
@@ -23,6 +23,7 @@ TELEMETRY = (
     "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_SERVICE_NAME",
     "OTEL_RESOURCE_ATTRIBUTES", "OTEL_EXPORTER_OTLP_HEADERS", "SENTRY_DSN",
     "SENTRY_ENVIRONMENT", "SENTRY_RELEASE", "Sentry__Dsn",
+    "Otel__Endpoint",
 )
 MONITORS = ("otel-collector", "prometheus", "loki", "promtail", "grafana",
             "node-exporter", "cadvisor")
@@ -92,15 +93,15 @@ def builder_contract(env, container):
     if individual:
         host, database = env["DB_HOST"], env["DB_NAME"]
         source = "individual"
+        port = env.get("DB_PORT", "5432")
+        known = bool(re.fullmatch(r"[0-9]+", port)) and 0 < int(port) < 65536
+        # These values are interpolated into a SQLAlchemy URL by the application.
+        known = known and not any(c in host + database for c in "/?@#")
+        known = known and not any(c in env["DB_USERNAME"] + env["DB_PASSWORD"] for c in "/?@#")
+        routing_clear = known
     else:
         source = "DATABASE_URL"
-        try:
-            parsed = urlsplit(env.get("DATABASE_URL", ""))
-            host, database = parsed.hostname, parsed.path.lstrip("/")
-            if parsed.scheme not in {"postgresql", "postgresql+psycopg2", "postgres"}:
-                host = None
-        except ValueError:
-            host, database = None, None
+        host, database, port, known, routing_clear = postgres_url_target(env.get("DATABASE_URL", ""))
     mounts = container.get("Mounts", [])
     relevant = []
     for mount in mounts:
@@ -111,12 +112,80 @@ def builder_contract(env, container):
                              "readonly": mount.get("ReadOnly") is True,
                              "source_is_scoped_staging_path": str(mount.get("Source", "")).startswith("/opt/jeeb-staging-")})
     configured = [part.strip() for part in env.get("TEMPLATE_JSON_FILES", "").split(",") if part.strip()]
-    return {"database_source": source, "database_host_matches_staging": host == "192.168.2.20",
-            "database_name_matches_staging": database == "jeeb_form_builder_staging",
+    return {"database_source": source, "database_target_unambiguous": known,
+            "database_routing_overrides_absent": routing_clear,
+            "database_host_matches_staging": host == "192.168.2.20" if known else None,
+            "database_port_matches_staging": int(port) == 5432 if known else None,
+            "database_name_matches_staging": database == "jeeb_form_builder_staging" if known else None,
             "templates": [name for name in configured if name in TEMPLATES],
             "unknown_template_present": any(name not in TEMPLATES for name in configured),
             "relevant_mounts": relevant,
             "other_mount_present": len(mounts) != len(relevant)}
+
+
+def postgres_url_target(value):
+    """Conservative SQLAlchemy URL projection; routing ambiguity yields unknown.
+
+    SQLAlchemy 2.0.27 _parse_url decodes username/password, NOT database. Keep
+    percent-encoded database names literal, matching that runtime parser.
+    """
+    if not value:
+        return None, None, None, False, None
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port if parsed.port is not None else 5432
+        query = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True) if parsed.query else []
+        # Unknown query keywords can become driver connect arguments. Only these
+        # documented non-routing options are permitted for target attestation.
+        routing_clear = all(key in {"sslmode", "connect_timeout", "application_name"} for key, _ in query)
+        valid = (parsed.scheme in {"postgresql", "postgresql+psycopg2", "postgresql+asyncpg"}
+                 and bool(parsed.hostname) and bool(parsed.path[1:])
+                 and 0 < port < 65536 and not parsed.fragment and routing_clear
+                 and parsed.netloc.count("@") <= 1
+                 and not any(c in value for c in "\r\n\t"))
+        # A colon with an empty port must not silently become the default.
+        valid = valid and not parsed.netloc.endswith(":")
+        return parsed.hostname, parsed.path[1:], port, bool(valid), routing_clear
+    except (ValueError, TypeError):
+        return None, None, None, False, False
+
+
+def heartbeat_contract(env):
+    result = {"redis_target_unambiguous": False, "redis_host_matches_staging": None,
+              "redis_port_matches_staging": None, "redis_database_matches_staging": None,
+              "service_auth_configured": bool(env.get("HEARTBEAT_SERVICE_AUTH_KEY")),
+              "jwks_configured": bool(env.get("HEARTBEAT_JWKS_URL"))}
+    try:
+        value = env.get("REDIS_URL", "")
+        parsed = urlsplit(value)
+        port = parsed.port if parsed.port is not None else 6379
+        # go-redis query arguments can override DB selection; any query is
+        # conservatively unknown, including encoded/duplicate db selectors.
+        known = (parsed.scheme in {"redis", "rediss"} and bool(parsed.hostname)
+                 and not parsed.query and not parsed.fragment and not parsed.netloc.endswith(":")
+                 and re.fullmatch(r"/[0-9]+", parsed.path) is not None
+                 and 0 < port < 65536 and not any(c in value for c in "\r\n\t"))
+        if known:
+            result.update(redis_target_unambiguous=True, redis_host_matches_staging=parsed.hostname == "192.168.2.20",
+                          redis_port_matches_staging=port == 6379, redis_database_matches_staging=int(parsed.path[1:]) == 4)
+    except (ValueError, TypeError):
+        pass
+    return result
+
+
+def cdn_contract(env, container):
+    mounts = container.get("Mounts", [])
+    matches = [m for m in mounts if m.get("Target") == "/app/uploads"]
+    mount = matches[0] if len(matches) == 1 else None
+    return {"exact_upload_bind_mount": (mount.get("Type") == "bind" and mount.get("Source") == "/opt/jeeb-staging-cdn/uploads"
+                                         and mount.get("ReadOnly") is not True) if mount else None,
+            "upload_mount_count": len(matches),
+            "additional_config_or_command_override": (len(mounts) != len(matches)
+                                                       or bool(container.get("Configs"))
+                                                       or bool(container.get("Args"))
+                                                       or bool(container.get("Command"))),
+            "storage_provider_is_local": env["Storage__Provider"].lower() == "local" if "Storage__Provider" in env else None,
+            "storage_path_matches_mount": env["LocalStorage__Path"] == "/app/uploads" if "LocalStorage__Path" in env else None}
 
 
 def sanitize_service(name, raw):
@@ -140,6 +209,10 @@ def sanitize_service(name, raw):
               "promtail_label": container.get("Labels", {}).get("logging") == "promtail"}
     if name == "jeeb-staging-form-builder-service":
         result["builder"] = builder_contract(env, container)
+    if name == "jeeb-staging-heart-beat":
+        result["heartbeat"] = heartbeat_contract(env)
+    if name == "jeeb-staging-cdn-service":
+        result["cdn"] = cdn_contract(env, container)
     return result
 
 

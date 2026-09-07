@@ -156,6 +156,49 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(inventory.DiagnosticError):
             inventory.sanitize_service("jeeb-staging-form-builder-service", service(CANARY))
 
+    def test_tagged_digest_is_canonicalized_without_emitting_tag(self):
+        base = "ghcr.io/olivium-dev/offer-service"
+        digest = "@sha256:" + "a" * 64
+        self.assertEqual(inventory.safe_image(base + ":" + CANARY + digest), base + digest)
+        for value in (base + ":latest", base + ":bad/tag" + digest,
+                      "ghcr.io/other/offer-service" + digest,
+                      "ghcr.io/olivium-dev/unknown-service" + digest):
+            self.assertIsNone(inventory.safe_image(value))
+
+    def task_contract(self, updates=None, count=1, expected=None):
+        name = "jeeb-staging-form-builder-service"
+        entry = inventory.sanitize_service(name, service())
+        if expected is not None:
+            entry.update(expected)
+        task = {"Name": name + ".1", "DesiredState": "Running",
+                "CurrentState": "Running 3 minutes ago", "Image": entry["image"],
+                "Error": CANARY, "Node": CANARY, "ID": CANARY}
+        task.update(updates or {})
+        return inventory.task_image_contract(name, entry, [json.dumps(task)] * count)
+
+    def test_running_task_digest_matches_without_raw_task_details(self):
+        result = self.task_contract()
+        self.assertTrue(result["running_task_images_match_service_spec"])
+        self.assertEqual(result["running_tasks"], 1)
+        self.assertNotIn(CANARY, json.dumps(result))
+
+    def test_task_attestation_never_accepts_mismatch_absence_or_transition(self):
+        for updates in ({"Image": "ghcr.io/olivium-dev/form-builder-service@sha256:" + "b" * 64},
+                        {"Image": CANARY}, {"CurrentState": "Starting 1 second ago"}):
+            self.assertFalse(self.task_contract(updates)["running_task_images_match_service_spec"])
+        self.assertFalse(self.task_contract(count=0)["running_task_images_match_service_spec"])
+        self.assertFalse(self.task_contract(expected={"image": None})["running_task_images_match_service_spec"])
+
+    def test_task_identity_and_malformed_payloads_fail_closed(self):
+        with self.assertRaises(inventory.DiagnosticError):
+            self.task_contract(count=2, expected={"desired_replicas": 2})
+        for updates in ({"Name": CANARY}, {"DesiredState": "Shutdown"}, {"CurrentState": None}):
+            with self.assertRaises(inventory.DiagnosticError):
+                self.task_contract(updates)
+        for raw in (CANARY, "null", "[]"):
+            with self.assertRaises(inventory.DiagnosticError):
+                inventory.task_image_contract("jeeb-staging-form-builder-service", {}, [raw])
+
     def test_wrong_hostname_stops_before_docker_or_http(self):
         with patch.object(inventory, "command", return_value="production\n") as cmd:
             with self.assertRaises(inventory.DiagnosticError):
@@ -225,7 +268,12 @@ class InventoryTests(unittest.TestCase):
             if args[:3] == ["docker", "service", "inspect"]:
                 return json.dumps([service(args[-1])])
             if args[:3] == ["docker", "service", "ps"]:
-                return "Running 3 minutes ago\n"
+                self.assertIn("--no-trunc", args)
+                self.assertEqual(args[-1], "{{json .}}")
+                return json.dumps({"Name": args[3] + ".1", "DesiredState": "Running",
+                                   "CurrentState": "Running 3 minutes ago",
+                                   "Image": service()["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"],
+                                   "Error": CANARY}) + "\n"
             if args[:2] == ["docker", "ps"]:
                 return "grafana\n" + CANARY + "\n"
             if args[:2] == ["systemctl", "show"]:
@@ -239,6 +287,7 @@ class InventoryTests(unittest.TestCase):
         self.assertNotIn(CANARY, json.dumps(result))
         builder = next(row for row in result["services"] if row["name"] == "jeeb-staging-form-builder-service")
         self.assertEqual(builder["running_tasks"], 1)
+        self.assertTrue(builder["running_task_images_match_service_spec"])
         self.assertEqual(result["monitoring"]["grafana"]["matched_running_container_names"], ["grafana"])
         for args in calls:
             self.assertNotIn("sudo", args)

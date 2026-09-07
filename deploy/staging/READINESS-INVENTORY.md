@@ -23,6 +23,14 @@ staging host/database match booleans, and reports fixed template/mount targets
 without source paths. It does not query a database, inspect submissions, read
 generated KYC content, read secret files, or fetch application logs.
 
+Service-spec images and current running task images are compared using fixed
+`docker service ps --no-trunc` JSON projection. A positive task-image result
+requires all desired replicas to be running with the same allowlisted immutable
+digest as the service spec. Tag-plus-digest references are normalized to the
+repository/digest; tag text and raw task fields never leave the host. Missing,
+transitioning, mismatched or unknown images do not pass. This attests task image
+references, not local container image IDs, application readiness, or telemetry.
+
 Builder target matching rejects query routing overrides, malformed ports and
 fragments; unknown/absent targets produce null match results. Percent-encoded
 database names stay literal, matching SQLAlchemy 2.0.27. The CDN projection

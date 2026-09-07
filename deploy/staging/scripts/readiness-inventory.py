@@ -80,12 +80,42 @@ def nonempty(env, keys):
 
 
 def safe_image(value):
-    # Only known organization/name plus immutable digest, never tags/userinfo.
-    if isinstance(value, str) and re.fullmatch(
-        r"ghcr\.io/olivium-dev/[a-z0-9-]+@sha256:[a-f0-9]{64}", value
-    ) and value.split("/")[-1].split("@")[0] in {*FLEET, "notification-service", "chat-service"}:
-        return value
+    # Docker may retain tag@digest. Ignore the mutable tag, emit only the
+    # allowlisted repository and immutable digest, never arbitrary tag text.
+    match = re.fullmatch(
+        r"ghcr\.io/olivium-dev/([a-z0-9-]+)(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[a-f0-9]{64})",
+        value,
+    ) if isinstance(value, str) else None
+    if match and match[1] in {*FLEET, "notification-service", "chat-service"}:
+        return "ghcr.io/olivium-dev/" + match[1] + "@" + match[2]
     return None
+
+
+def task_image_contract(name, entry, rows):
+    """Project task-state/image equality without exposing IDs or raw fields."""
+    tasks = []
+    names = set()
+    try:
+        for row in rows:
+            task = json.loads(row)
+            if (not isinstance(task, dict)
+                    or not isinstance(task.get("Name"), str)
+                    or re.fullmatch(re.escape(name) + r"\.[0-9]+", task["Name"]) is None
+                    or task["Name"] in names
+                    or task.get("DesiredState") != "Running"
+                    or not isinstance(task.get("CurrentState"), str)):
+                raise DiagnosticError("invalid task identity or state")
+            names.add(task["Name"])
+            tasks.append(task)
+    except (ValueError, TypeError):
+        raise DiagnosticError("invalid task diagnostic response") from None
+    running = [task for task in tasks if task["CurrentState"].startswith("Running ")]
+    matches = [safe_image(task.get("Image")) == entry["image"]
+               and entry["image"] is not None for task in running]
+    return {"desired_running_tasks": len(tasks), "running_tasks": len(running),
+            "running_task_images_match_service_spec": (
+                bool(tasks) and len(tasks) == entry["desired_replicas"]
+                and len(running) == len(tasks) and all(matches))}
 
 
 def builder_contract(env, container):
@@ -269,9 +299,8 @@ def collect():
             continue
         raw = structured(["docker", "service", "inspect", name])[0]
         entry = sanitize_service(name, raw)
-        states = command(["docker", "service", "ps", name, "--filter", "desired-state=running", "--format", "{{.CurrentState}}"] ).splitlines()
-        entry["desired_running_tasks"] = len(states)
-        entry["running_tasks"] = sum(state.startswith("Running ") for state in states)
+        rows = command(["docker", "service", "ps", name, "--no-trunc", "--filter", "desired-state=running", "--format", "{{json .}}"] ).splitlines()
+        entry.update(task_image_contract(name, entry, rows))
         result["services"].append(entry)
     result["monitoring"] = {}
     container_names = set(command(["docker", "ps", "--format", "{{.Names}}"] ).splitlines())

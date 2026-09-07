@@ -16,7 +16,7 @@ CANARY = "private-token-DO-NOT-OUTPUT"
 
 
 def service(name="jeeb-staging-form-builder-service"):
-    return {"Spec": {"Name": name, "Mode": {"Replicated": {"Replicas": 1}},
+    return {"ID": "s" * 25, "Spec": {"Name": name, "Mode": {"Replicated": {"Replicas": 1}},
                      "TaskTemplate": {"ContainerSpec": {
                          "Image": "ghcr.io/olivium-dev/form-builder-service@sha256:" + "a" * 64,
                          "Env": ["DATABASE_URL=postgresql://user:" + CANARY + "@192.168.2.20:5432/jeeb_form_builder_staging",
@@ -270,10 +270,12 @@ class InventoryTests(unittest.TestCase):
             if args[:3] == ["docker", "service", "ps"]:
                 self.assertIn("--no-trunc", args)
                 self.assertEqual(args[-1], "{{json .}}")
-                return json.dumps({"Name": args[3] + ".1", "DesiredState": "Running",
+                return json.dumps({"ID": "t" * 25, "Name": args[3] + ".1", "DesiredState": "Running",
                                    "CurrentState": "Running 3 minutes ago",
                                    "Image": service()["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"],
                                    "Error": CANARY}) + "\n"
+            if args[:2] == ["docker", "inspect"]:
+                raise inventory.DiagnosticError("fixed read-only command unavailable")
             if args[:2] == ["docker", "ps"]:
                 return "grafana\n" + CANARY + "\n"
             if args[:2] == ["systemctl", "show"]:
@@ -294,6 +296,97 @@ class InventoryTests(unittest.TestCase):
             self.assertNotIn("exec", args)
             self.assertNotIn("update", args)
             self.assertNotIn("logs", args)
+
+
+class OfferLocalImageTests(unittest.TestCase):
+    def setUp(self):
+        self.raw = service("jeeb-staging-offer-service")
+        self.raw["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"] = "offer:" + CANARY
+        self.entry = inventory.sanitize_service("jeeb-staging-offer-service", self.raw)
+        self.rows = [json.dumps({"ID": "t" * 25, "Name": "jeeb-staging-offer-service.1",
+                                "DesiredState": "Running", "CurrentState": "Running 2 minutes ago"})]
+        self.task = {"id": "t" * 25, "service": "s" * 25, "desired": "running", "state": "running",
+                     "container": "c" * 64, "image": "offer:" + CANARY}
+        self.container = {"id": "c" * 64, "running": True, "image": "sha256:" + "a" * 64,
+                          "task": "t" * 25, "service": "s" * 25}
+        self.digest = "ghcr.io/olivium-dev/offer-service@sha256:" + "b" * 64
+        self.image = {"id": "sha256:" + "a" * 64, "digests": [self.digest, "other/" + CANARY]}
+
+    def run_probe(self, values=None):
+        values = values if values is not None else [self.task, self.container, self.image, self.task, self.container]
+        outputs = [value if isinstance(value, Exception) else json.dumps(value) for value in values]
+        with patch.object(inventory, "command", side_effect=outputs) as command:
+            result = inventory.offer_local_image(self.raw, self.entry, self.rows)
+        self.assertNotIn(CANARY, json.dumps(result))
+        for call in command.call_args_list:
+            args = call.args[0]
+            self.assertEqual(args[:3], ["docker", "inspect", "--type"])
+            self.assertIn(args[-1], ("t" * 25, "c" * 64, "sha256:" + "a" * 64))
+            self.assertNotIn(CANARY, " ".join(args))
+        return result
+
+    def test_resolves_tag_only_task_without_disclosing_tag_or_other_digests(self):
+        self.assertEqual(self.run_probe(), {"verified": True, "image": self.digest})
+
+    def test_nonlocal_or_disappeared_container_remains_unknown(self):
+        unavailable = inventory.DiagnosticError("fixed read-only command unavailable")
+        self.assertEqual(self.run_probe([self.task, unavailable]), {"verified": False, "image": None})
+
+    def test_unknown_or_ambiguous_repo_digests_remain_unknown(self):
+        for digests in (None, [], [CANARY], [self.digest, self.digest[:-1] + "c"], [123]):
+            self.image["digests"] = digests
+            self.assertFalse(self.run_probe()["verified"])
+
+    def test_identity_and_cardinality_fail_before_engine_derived_followups(self):
+        for field, value in (("id", CANARY), ("service", CANARY), ("container", "--" + CANARY)):
+            original = self.task[field]
+            self.task[field] = value
+            with self.assertRaises(inventory.DiagnosticError):
+                self.run_probe()
+            self.task[field] = original
+        for field in ("id", "task", "service", "image"):
+            original = self.container[field]
+            self.container[field] = CANARY
+            with self.assertRaises(inventory.DiagnosticError):
+                self.run_probe()
+            self.container[field] = original
+        for rows in ([], self.rows * 2):
+            with patch.object(inventory, "command") as command:
+                with self.assertRaises(inventory.DiagnosticError):
+                    inventory.offer_local_image(self.raw, self.entry, rows)
+                command.assert_not_called()
+
+    def test_task_id_rejected_before_inspect(self):
+        row = json.loads(self.rows[0])
+        for key, value in (("ID", CANARY), ("Name", "jeeb-staging-offer-service.2")):
+            invalid = dict(row, **{key: value})
+            with patch.object(inventory, "command") as command:
+                with self.assertRaises(inventory.DiagnosticError):
+                    inventory.offer_local_image(self.raw, self.entry, [json.dumps(invalid)])
+                command.assert_not_called()
+        self.raw["ID"] = CANARY
+        with patch.object(inventory, "command") as command:
+            with self.assertRaises(inventory.DiagnosticError):
+                inventory.offer_local_image(self.raw, self.entry, self.rows)
+            command.assert_not_called()
+
+    def test_transition_mismatch_and_race_are_not_attested(self):
+        for change in ({"state": "starting"}, {"desired": "shutdown"}, {"image": CANARY}):
+            self.assertFalse(self.run_probe([dict(self.task, **change)])["verified"])
+        self.assertFalse(self.run_probe([self.task, dict(self.container, running=False)])["verified"])
+        self.assertFalse(self.run_probe([self.task, self.container, self.image,
+                                         dict(self.task, state="shutdown")])["verified"])
+
+    def test_malformed_inspect_and_image_identity_fail_closed(self):
+        for output in ([], "not-json-object", dict(self.image, id=CANARY)):
+            with self.assertRaises(inventory.DiagnosticError):
+                self.run_probe([self.task, self.container, output])
+
+    def test_existing_immutable_reference_cannot_disagree_with_local_digest(self):
+        reference = "ghcr.io/olivium-dev/offer-service@sha256:" + "d" * 64
+        self.raw["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"] = reference
+        self.task["image"] = reference
+        self.assertFalse(self.run_probe()["verified"])
 
 
 if __name__ == "__main__":

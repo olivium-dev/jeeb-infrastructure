@@ -31,6 +31,18 @@ repository/digest; tag text and raw task fields never leave the host. Missing,
 transitioning, mismatched or unknown images do not pass. This attests task image
 references, not local container image IDs, application readiness, or telemetry.
 
+Only offer has an additional `offer_local_image` projection for the observed
+tag-only/unknown-reference case. It binds the one fixed service task to its local
+running container through validated engine IDs and Swarm identity labels, resolves
+the local immutable image ID to exactly one known offer RepoDigest, and rechecks
+task/container stability. Only `ghcr.io/olivium-dev/offer-service@sha256:...` can
+leave this projection. Nonlocal/missing containers, transitions, ambiguous or
+unknown digests remain unverified; identity/cardinality errors fail closed. No
+raw task fields, container IDs, labels, tags, environment or arbitrary RepoDigests
+are serialized. This adds read-only projected inspect calls, not container exec,
+pulls, registry lookup, remote writes or additional deployment authority. Existing
+service-spec/task-reference fields retain their original independent meaning.
+
 Builder target matching rejects query routing overrides, malformed ports and
 fragments; unknown/absent targets produce null match results. Percent-encoded
 database names stay literal, matching SQLAlchemy 2.0.27. The CDN projection

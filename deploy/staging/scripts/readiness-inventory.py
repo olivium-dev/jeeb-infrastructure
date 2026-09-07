@@ -118,6 +118,89 @@ def task_image_contract(name, entry, rows):
                 and len(running) == len(tasks) and all(matches))}
 
 
+def offer_local_image(raw, entry, rows):
+    """Resolve only the fixed offer task's local image; never emit raw IDs/tags."""
+    unknown = {"verified": False, "image": None}
+    name = "jeeb-staging-offer-service"
+    task_image_contract(name, entry, rows)  # Validate names/states before any follow-up.
+    if entry["desired_replicas"] != 1 or len(rows) != 1:
+        raise DiagnosticError("offer task cardinality mismatch")
+    task_row = json.loads(rows[0])
+    if task_row["Name"] != name + ".1":
+        raise DiagnosticError("offer task slot mismatch")
+    if not task_row["CurrentState"].startswith("Running "):
+        return unknown
+
+    def identifier(value, pattern):
+        if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
+            raise DiagnosticError("invalid offer diagnostic identity")
+        return value
+
+    task_id = identifier(task_row.get("ID"), r"[a-z0-9]{25}")
+    service_id = identifier(raw.get("ID"), r"[a-z0-9]{25}")
+    task_format = ('{"id":{{json .ID}},"service":{{json .ServiceID}},'
+                   '"desired":{{json .DesiredState}},"state":{{json .Status.State}},'
+                   '"container":{{json .Status.ContainerStatus.ContainerID}},'
+                   '"image":{{json .Spec.ContainerSpec.Image}}}')
+    container_format = ('{"id":{{json .Id}},"running":{{json .State.Running}},'
+                        '"image":{{json .Image}},'
+                        '"task":{{json (index .Config.Labels "com.docker.swarm.task.id")}},'
+                        '"service":{{json (index .Config.Labels "com.docker.swarm.service.id")}}}')
+
+    def inspect(kind, identity, projection):
+        try:
+            output = command(["docker", "inspect", "--type", kind, "--format", projection, identity])
+        except DiagnosticError:
+            return None  # Task may be nonlocal/disappeared; never fall back to a tag.
+        try:
+            value = json.loads(output)
+        except (ValueError, TypeError):
+            raise DiagnosticError("invalid offer diagnostic response") from None
+        if not isinstance(value, dict):
+            raise DiagnosticError("invalid offer diagnostic response")
+        return value
+
+    task = inspect("task", task_id, task_format)
+    if task is None:
+        return unknown
+    if task.get("id") != task_id or task.get("service") != service_id:
+        raise DiagnosticError("offer task identity mismatch")
+    if task.get("desired") != "running" or task.get("state") != "running":
+        return unknown
+    if task.get("image") != raw["Spec"]["TaskTemplate"]["ContainerSpec"].get("Image"):
+        return unknown
+    container_id = identifier(task.get("container"), r"[a-f0-9]{64}")
+    container = inspect("container", container_id, container_format)
+    if container is None:
+        return unknown
+    if (container.get("id") != container_id or container.get("task") != task_id
+            or container.get("service") != service_id):
+        raise DiagnosticError("offer container identity mismatch")
+    if container.get("running") is not True:
+        return unknown
+    image_id = identifier(container.get("image"), r"sha256:[a-f0-9]{64}")
+    image = inspect("image", image_id, '{"id":{{json .Id}},"digests":{{json .RepoDigests}}}')
+    if image is None:
+        return unknown
+    if image.get("id") != image_id:
+        raise DiagnosticError("offer image identity mismatch")
+    digests = image.get("digests")
+    if not isinstance(digests, list) or not all(isinstance(d, str) for d in digests):
+        return unknown
+    matches = {d for d in digests if re.fullmatch(
+        r"ghcr\.io/olivium-dev/offer-service@sha256:[a-f0-9]{64}", d)}
+    if len(matches) != 1:
+        return unknown
+    resolved = next(iter(matches))
+    known_reference = safe_image(task.get("image"))
+    if known_reference is not None and known_reference != resolved:
+        return unknown
+    # Recheck task/container stability after resolving the local image ID.
+    if inspect("task", task_id, task_format) != task or inspect("container", container_id, container_format) != container:
+        return unknown
+    return {"verified": True, "image": resolved}
+
+
 def builder_contract(env, container):
     individual = all(env.get(key) for key in ("DB_HOST", "DB_NAME", "DB_USERNAME", "DB_PASSWORD"))
     if individual:
@@ -301,6 +384,8 @@ def collect():
         entry = sanitize_service(name, raw)
         rows = command(["docker", "service", "ps", name, "--no-trunc", "--filter", "desired-state=running", "--format", "{{json .}}"] ).splitlines()
         entry.update(task_image_contract(name, entry, rows))
+        if suffix == "offer-service":
+            entry["offer_local_image"] = offer_local_image(raw, entry, rows)
         result["services"].append(entry)
     result["monitoring"] = {}
     container_names = set(command(["docker", "ps", "--format", "{{.Names}}"] ).splitlines())

@@ -56,7 +56,9 @@ class CasReadonlyDiagnosticTests(unittest.TestCase):
                     def do_GET(self):
                         requests.append(("GET", self.path))
                         if self.path == "/version":
-                            body = {"ApiVersion": maximum, "MinAPIVersion": minimum, "private": "private-sentinel"}
+                            body = {"ApiVersion": maximum, "MinAPIVersion": minimum,
+                                    "Version": "29.0.0", "GitCommit": "abcdef123456",
+                                    "private": "private-sentinel"}
                         else:
                             body = {"Name": "olivium-ephemerals", "Swarm": {
                                 "NodeAddr": "192.168.2.20", "ControlAvailable": True, "LocalNodeState": "active"},
@@ -83,9 +85,22 @@ class CasReadonlyDiagnosticTests(unittest.TestCase):
                     self.assertEqual("engine_version", report["phase"])
                 else:
                     self.assertEqual(0, status)
+                    self.assertEqual("29.0.0", report["engine_version"])
+                    self.assertEqual("abcdef123456", report["engine_git_commit"])
                     self.assertEqual(minimum == "1.24", report["api_1_41_supported"])
                     self.assertTrue(report["auth_shapes"]["um"]["designated_username_matches"])
                     self.assertTrue(report["auth_shapes"]["otp"]["password_present"])
+
+    def test_engine_identity_rejects_unbounded_or_private_text(self):
+        for release in (None, 29, "", "private-sentinel", "29.0.0\nprivate-sentinel",
+                        "29.0.0-" + "a" * 49):
+            with self.subTest(release=release), self.assertRaises(ValueError):
+                diagnostic.engine_source({"Version": release, "GitCommit": "abcdef1"})
+        for commit in (None, 1234567, "", "private-sentinel", "abcdef1\n", "a" * 41):
+            with self.subTest(commit=commit), self.assertRaises(ValueError):
+                diagnostic.engine_source({"Version": "29.0.0", "GitCommit": commit})
+        self.assertEqual({"engine_version": "29.0.0-rc.1", "engine_git_commit": "abcdef1"},
+                         diagnostic.engine_source({"Version": "29.0.0-rc.1", "GitCommit": "abcdef1"}))
 
     def test_missing_or_malformed_profiles_disclose_only_shape(self):
         with tempfile.TemporaryDirectory() as directory:

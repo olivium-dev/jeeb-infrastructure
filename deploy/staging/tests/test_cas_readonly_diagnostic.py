@@ -96,7 +96,7 @@ class CasReadonlyDiagnosticTests(unittest.TestCase):
                         "29.0.0-" + "a" * 49):
             with self.subTest(release=release), self.assertRaises(ValueError):
                 diagnostic.engine_source({"Version": release, "GitCommit": "abcdef1"})
-        for commit in (None, 1234567, "", "private-sentinel", "abcdef1\n", "a" * 41):
+        for commit in (None, 1234567, "", "private sentinel", "abcdef1\n", "a" * 101, "a/b", "a=secret"):
             with self.subTest(commit=commit), self.assertRaises(ValueError):
                 diagnostic.engine_source({"Version": "29.0.0", "GitCommit": commit})
         self.assertEqual({"engine_version": "29.0.0-rc.1", "engine_git_commit": "abcdef1"},
@@ -105,11 +105,19 @@ class CasReadonlyDiagnosticTests(unittest.TestCase):
     def test_partial_identity_is_explicit_and_does_not_emit_unvalidated_field(self):
         report = {}
         with self.assertRaises(ValueError):
-            diagnostic.engine_source({"Version": "29.0.0", "GitCommit": "private-sentinel"}, report)
+            diagnostic.engine_source({"Version": "29.0.0", "GitCommit": "private sentinel"}, report)
         self.assertEqual("29.0.0", report["engine_version"])
         self.assertFalse(report["engine_git_commit_valid"])
         self.assertNotIn("engine_git_commit", report)
-        self.assertNotIn("private-sentinel", json.dumps(report))
+        self.assertNotIn("private sentinel", json.dumps(report))
+
+    def test_public_package_identity_is_distinct_from_pure_hex(self):
+        for commit in ("29.1.3-0ubuntu1~24.04.1", "1:29.1.3+dfsg_1", "a" * 100):
+            report = {}
+            diagnostic.engine_source({"Version": "29.1.3", "GitCommit": commit}, report)
+            self.assertEqual(commit, report["engine_git_commit"])
+            self.assertFalse(report["engine_git_commit_valid"])
+            self.assertTrue(report["engine_git_commit_package_shape_valid"])
 
     def test_paired_projection_is_fixed_and_does_not_emit_spec_or_secret_data(self):
         node, network, secret = "n" * 25, "k" * 25, "s" * 25
@@ -146,8 +154,25 @@ class CasReadonlyDiagnosticTests(unittest.TestCase):
         self.assertTrue(result["services"]["gateway"]["delivery_url_matches"])
         self.assertTrue(result["services"]["gateway"]["entrypoint_matches"])
         self.assertTrue(result["services"]["delivery"]["skip_db_init_true"])
+        for role in ("gateway", "delivery"):
+            for field in ("no_mounts", "no_configs", "no_loader_environment_overrides"):
+                self.assertTrue(result["services"][role][field])
         self.assertTrue(result["dedicated_secret"]["metadata_matches"])
         self.assertNotIn("private-sentinel", json.dumps(result))
+        def overridden(path):
+            transport, value = get(path)
+            if "/services/" in path:
+                container = value["Spec"]["TaskTemplate"]["ContainerSpec"]
+                container.update(Mounts=[{"Target": "private-sentinel"}], Configs=[{"ConfigID": "private-sentinel"}])
+                container["Env"].append("LD_PRELOAD=private-sentinel")
+            return transport, value
+        with tempfile.TemporaryDirectory() as directory, patch.object(diagnostic, "get", side_effect=overridden), \
+             patch.object(diagnostic.Path, "home", return_value=Path(directory)):
+            negative = diagnostic.paired_posture("1.52", {"Swarm": {"NodeID": node}})
+        for role in ("gateway", "delivery"):
+            for field in ("no_mounts", "no_configs", "no_loader_environment_overrides"):
+                self.assertFalse(negative["services"][role][field])
+        self.assertNotIn("private-sentinel", json.dumps(negative))
 
     def test_missing_or_malformed_profiles_disclose_only_shape(self):
         with tempfile.TemporaryDirectory() as directory:

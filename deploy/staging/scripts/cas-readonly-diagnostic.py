@@ -49,6 +49,18 @@ def api(value):
     return tuple(int(part) for part in value.split("."))
 
 
+def engine_source(version):
+    """Bounded public build identity, never arbitrary daemon text."""
+    release, commit = version.get("Version"), version.get("GitCommit")
+    if not isinstance(release, str) or re.fullmatch(
+        r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?:[-+][a-zA-Z0-9.-]{1,48})?", release
+    ) is None:
+        raise ValueError("engine release")
+    if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{7,40}", commit) is None:
+        raise ValueError("engine commit")
+    return {"engine_version": release, "engine_git_commit": commit}
+
+
 def auth_shape(path):
     report = {"exists": path.exists(), "regular_nonsymlink": False}
     if not report["exists"]:
@@ -100,6 +112,7 @@ def collect():
             raise ValueError("transport")
         minimum, maximum = version.get("MinAPIVersion"), version.get("ApiVersion")
         lower, upper = api(minimum), api(maximum)
+        report.update(engine_source(version))
         # Numeric strings only; never report arbitrary server-supplied fields.
         report["minimum_api"] = minimum
         report["maximum_api"] = maximum

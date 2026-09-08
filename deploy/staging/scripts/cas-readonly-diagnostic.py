@@ -63,16 +63,18 @@ def engine_source(version, report=None):
         r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?:[-+][a-zA-Z0-9.-]{1,48})?", release
     ) is not None
     commit_valid = isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{7,40}", commit) is not None
+    package_valid = isinstance(commit, str) and re.fullmatch(r"[A-Za-z0-9.+:~_-]{1,100}", commit) is not None
     if report is not None:
         report.update(engine_version_valid=release_valid, engine_git_commit_valid=commit_valid,
-                      engine_version_present=release is not None, engine_git_commit_present=commit is not None)
+                      engine_version_present=release is not None, engine_git_commit_present=commit is not None,
+                      engine_git_commit_package_shape_valid=package_valid)
         if release_valid:
             report["engine_version"] = release
-        if commit_valid:
+        if package_valid:
             report["engine_git_commit"] = commit
     if not release_valid:
         raise ValueError("engine release")
-    if not commit_valid:
+    if not package_valid:
         raise ValueError("engine commit")
     return {"engine_version": release, "engine_git_commit": commit}
 
@@ -119,6 +121,11 @@ def paired_posture(maximum, info):
             service_name_matches=spec.get("Name") == "jeeb-staging-" + name,
             single_replica=spec.get("Mode") == {"Replicated": {"Replicas": 1}},
             no_command_overrides=not any(container.get(k) for k in ("Command", "Args", "Dir")),
+            no_mounts=not container.get("Mounts"),
+            no_configs=not container.get("Configs"),
+            no_loader_environment_overrides=valid_env and not any(key in values for key in (
+                "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DOTNET_ROOT", "DOTNET_STARTUP_HOOKS",
+                "ASPNETCORE_HOSTINGSTARTUPASSEMBLIES")),
             failure_action_pause=spec.get("UpdateConfig", {}).get("FailureAction") == "pause",
             environment_shape_valid=valid_env,
             placement_shape_valid=valid_constraints,

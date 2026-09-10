@@ -78,7 +78,7 @@ The read-only capture does not prove that every active owner is running.
 | `artifact.files` | Exact inventory of every regular payload file: `path`, `sha256`, integer `size`, boolean `executable`. |
 | `baseline` | Complete object from the fresh observation output, reviewed for coverage. |
 | `config_files` | Nonempty list of incumbent configuration files required by the candidate; all must be in baseline files and bound as configuration. |
-| `path_bindings` | Explicit existing config-file and persistent-directory mappings described below. Empty is accepted only if the required configuration rules can still be satisfied. |
+| `path_bindings` | Explicit existing config-file and persistent-directory mappings described below. At least one config binding is required by the current schema. |
 | `runtime_files` | Array of external runtime/tool/library file pins: physical `path`, `sha256`, numeric `uid`, numeric permission `mode`. Must include the resolved external launch executable and external final executable when applicable. Add the runtime libraries/tools needed to substantiate compatibility. |
 | `expected_environment` | Exact final process environment map: variable name to SHA-256 of its raw value bytes. No raw values. |
 | `launch` | Reviewed launch contract described below. |
@@ -122,8 +122,9 @@ provider credentials in the launch manifest.
 The helper runs as the existing non-root service identity. For each reviewed
 shell-source binding it checks the hash, freezes bytes in a sealed anonymous
 memory file, sources them using Bash, and closes the descriptor before the final
-exec. `export_all: true` deliberately uses shell `set -a`; `false` preserves
-explicit exports only. Match the incumbent source semantics and ordering. This
+exec. `export_all: true` deliberately uses shell `set -a`; `false` does not
+automatically export new assignments, while existing export attributes remain.
+Match the incumbent source semantics and ordering. This
 is executable shell source under the service UID, **not** a generic dotenv
 parser. Do not duplicate a systemd `EnvironmentFile` as a shell binding unless
 the reviewed launch actually needs both. Existing systemd environment settings

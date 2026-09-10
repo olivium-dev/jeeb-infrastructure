@@ -85,6 +85,11 @@ curl http://localhost:5000/health/live
 Colleague and CI access instructions for MSI are documented in
 [`deploy/msi/MSI-CLOUDFLARE-SSH-ACCESS.md`](deploy/msi/MSI-CLOUDFLARE-SSH-ACCESS.md).
 
+Prepared forward-only scripts for each of the 24 active MSI backend services are
+documented in [`deploy/msi/services/README.md`](deploy/msi/services/README.md).
+They default to offline planning, require a pinned approved candidate for host
+operations, and do not deploy on push or provide rollback behavior.
+
 ### Service Deploy Workflows (jeeb-gateway, etc.)
 
 | Workflow | Trigger | Purpose |

@@ -1,4 +1,14 @@
-# MSI realtime Redis override
+# MSI native realtime configuration
+
+These files document narrowly applied MSI development changes, not a generic
+deployment command or permission to change another environment. See the
+[private-listener and WSS runbook](PRIVATE-LISTENER-WSS.md) for the exact applied
+binding/ingress artifacts, operator guards, evidence and remaining acceptance
+gates. The checked-in nginx fragment retains its original draft comment so its
+bytes match the reviewed insertion; the timestamped runbook records what was
+actually applied and tested.
+
+## Redis override
 
 `zzzz-msi-redis.conf` is a minimal native-systemd override for the verified MSI
 development backend. Its target is

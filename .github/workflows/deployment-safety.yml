@@ -15,3 +15,5 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Verify default-branch and forward-only deployment authority
         run: python3 scripts/check-deployment-safety-policy.py
+      - name: Verify MSI private realtime configuration contract
+        run: python3 -m unittest discover -s deploy/msi/realtime/tests -p 'test_*.py' -v

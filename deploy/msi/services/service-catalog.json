@@ -1,0 +1,1497 @@
+{
+  "schema": 1,
+  "host": {
+    "hostname": "ouday-GT70-2OC-2OD",
+    "ipv4": "192.168.2.39"
+  },
+  "purpose": "Full MSI development backend; source inventory and guarded deployment planning, not runtime completion evidence.",
+  "policy": {
+    "forward_only": true,
+    "active_owner_count": 24,
+    "automatic_migrations": false,
+    "automatic_credential_changes": false,
+    "automatic_datastore_changes": false,
+    "preserve_existing_config": true,
+    "preserve_existing_persistent_data": true,
+    "unselected_units_and_containers": "Preserve untouched.",
+    "failed_candidate": "Stop deployment progression, retain the selected candidate and private evidence, and require an operator decision; do not stop its process or restore an old release automatically."
+  },
+  "evidence": {
+    "catalogued_on": "2026-09-10",
+    "source_contract": "jeeb-infrastructure/deploy/msi/FULL-DEVELOPMENT-BACKEND.md",
+    "runtime_inventory": "Operator-captured fleet-runtime-inventory.json and fleet-port-owners.json on2026-09-10; fresh per-execution pins remain mandatory.",
+    "default_branch_basis": "Cached local origin/HEAD except settlement main independently verified through GitHub; default branches do not authorize unreviewed current-head deployment.",
+    "unit_mapping_basis": "Fresh MSI system/user manager and listener ownership audit; current process arguments and hashes must be re-attested before deployment.",
+    "probe_semantics": "GET-only primary probes; source response contracts, not fabricated tested outcomes. Documentation/liveness/configuration never imply full functional readiness.",
+    "dependency_semantics": "depends_on contains active owner deployment-order prerequisites only, not an exhaustive runtime call graph. Callback cycles and external dependencies are documented separately."
+  },
+  "services": [
+    {
+      "id": "jeeb-gateway",
+      "repository": "olivium-dev/jeeb-gateway",
+      "default_branch": "main",
+      "unit": "jeeb-gateway.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10090,
+      "runtime": "dotnet8",
+      "project_or_entry": "src/JeebGateway/JeebGateway.csproj",
+      "depends_on": [
+        "jeeb-state-service",
+        "user-management",
+        "one-time-password",
+        "wallet-service",
+        "feedback-service",
+        "remote-user-preferences",
+        "ban-service",
+        "kyc-service",
+        "notification-service",
+        "push-notification",
+        "chat-service",
+        "cdn-service",
+        "geolocation-service",
+        "delivery-service",
+        "offer-service",
+        "heart-beat",
+        "settlement-service",
+        "bundler-service",
+        "realtime-comunication-service",
+        "voice-transcription-service",
+        "contract-signing-service",
+        "form-builder-service",
+        "compliment-service"
+      ],
+      "external_dependencies": [
+        "credential-files",
+        "private-artifact-store"
+      ],
+      "effects": [
+        "Configured hosted workers can claim durable work, expire requests, activate scheduled deliveries and dispatch callbacks.",
+        "Configured startup seeders can register notification catalog entries and reconcile moderation defaults.",
+        "Preserve commission collection OFF; deployment does not authorize a debit, transfer, receipt replay or a financial configuration change."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "Healthy",
+          "failing": []
+        },
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "json",
+        "strength": "dependency",
+        "required_keys": [
+          "checks",
+          "totalDurationMs"
+        ],
+        "numeric_min": {
+          "totalDurationMs": 0
+        }
+      },
+      "notes": [
+        "HTTP200 with status Degraded is a failure, not a pass.",
+        "Preserve the incumbent framework environment; Development/Testing omit generic downstream checks.",
+        "Strict aggregate health is not proof of all24 owner capabilities. Probe owners directly.",
+        "Runtime is currently a self-contained .NET8 apphost; a framework-dependent candidate requires explicit runtime/version attestation.",
+        "Existing missing credential-owner files remain blockers; do not generate replacements or bypass readiness."
+      ],
+      "source_refs": [
+        "jeeb-gateway/src/JeebGateway/Program.cs:803",
+        "jeeb-gateway/src/JeebGateway/Program.cs:1764",
+        "jeeb-gateway/src/JeebGateway/Program.cs:3295",
+        "jeeb-gateway/src/JeebGateway/Services/Bff/AggregateHealthResponseWriter.cs:43",
+        "jeeb-gateway/src/JeebGateway/Extensions/HealthCheckExtensions.cs:55"
+      ]
+    },
+    {
+      "id": "jeeb-state-service",
+      "repository": "olivium-dev/jeeb-state-service",
+      "default_branch": "main",
+      "unit": "jeeb-state.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10073,
+      "runtime": "dotnet8",
+      "project_or_entry": "src/JeebStateService/JeebStateService.csproj",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql",
+        "credential-files"
+      ],
+      "effects": [
+        "Normal startup registers configured retention and case-outbox workers; they can change durable state and dispatch callbacks.",
+        "Schema migration is a separate explicit operator command, never a deploy step."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {},
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "text",
+        "strength": "dependency",
+        "text": "Healthy"
+      },
+      "notes": [
+        "Readiness checks PostgreSQL and the required schema/catalog. Preserve configured ownership authentication and database identity.",
+        "Callback relationships to gateway are runtime configuration, not a dependency-cycle instruction."
+      ],
+      "source_refs": [
+        "jeeb-state-service/src/JeebStateService/Program.cs:10",
+        "jeeb-state-service/src/JeebStateService/Program.cs:46",
+        "jeeb-state-service/src/JeebStateService/Program.cs:96",
+        "jeeb-state-service/src/JeebStateService/Program.cs:162"
+      ]
+    },
+    {
+      "id": "user-management",
+      "repository": "olivium-dev/user-management",
+      "default_branch": "master",
+      "unit": "jeeb-user-management.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10001,
+      "runtime": "dotnet8",
+      "project_or_entry": "UserManagement.csproj",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql",
+        "credential-files"
+      ],
+      "effects": [
+        "Schema mutation requires the explicit database-migration command; do not invoke it during deployment.",
+        "Preserve identity, token issuance, role and credential configuration."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ready",
+          "db": "schema_ok"
+        },
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "json",
+        "strength": "dependency"
+      },
+      "notes": [
+        "Readiness performs a read-only schema/catalog probe, not login or role-flow verification."
+      ],
+      "source_refs": [
+        "user-management/Program.cs:22",
+        "user-management/Program.cs:162",
+        "user-management/ProductionReadiness.cs:9"
+      ]
+    },
+    {
+      "id": "one-time-password",
+      "repository": "olivium-dev/one-time-password",
+      "default_branch": "master",
+      "unit": "jeeb-otp.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10037,
+      "runtime": "dotnet8",
+      "project_or_entry": "OTPApi/OTPApi.csproj",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql",
+        "twilio",
+        "credential-files"
+      ],
+      "effects": [
+        "Historical startup database migration/seeding is configuration-dependent; Production requires exact SKIP_DB_INIT=true and separate migration.",
+        "Provider requests may send real SMS; health must not exercise send endpoints."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {},
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "text",
+        "strength": "dependency",
+        "text": "Healthy"
+      },
+      "notes": [
+        "Readiness includes schema and mode-specific Twilio configuration, not SMS delivery.",
+        "Preserve framework mode, strict service authentication and existing provider mode; no fake-mode substitution."
+      ],
+      "source_refs": [
+        "one-time-password/OTPApi/Program.cs:183",
+        "one-time-password/OTPApi/Program.cs:238",
+        "one-time-password/OTPApi/Program.cs:245"
+      ]
+    },
+    {
+      "id": "wallet-service",
+      "repository": "olivium-dev/wallet-service",
+      "default_branch": "master",
+      "unit": "jeeb-wallet.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10014,
+      "runtime": "dotnet8",
+      "project_or_entry": "WalletService.csproj",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql"
+      ],
+      "effects": [
+        "Normal startup does not migrate schema or create system wallets.",
+        "Explicit migrate/seed-system-wallet commands and all transaction endpoints are outside deployment."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "Healthy"
+        },
+        "required_true": [],
+        "path": "/health",
+        "kind": "json",
+        "strength": "dependency",
+        "required_keys": [
+          "components"
+        ]
+      },
+      "notes": [
+        "The aggregate includes database and schema checks. No balance mutation or financial test is authorized.",
+        "The existing one-off USD0.10 commission was already collected; never repeat it as a deployment check."
+      ],
+      "source_refs": [
+        "wallet-service/Program.cs:115",
+        "wallet-service/Program.cs:150",
+        "wallet-service/Program.cs:199"
+      ]
+    },
+    {
+      "id": "feedback-service",
+      "repository": "olivium-dev/feedback-service",
+      "default_branch": "master",
+      "unit": "jeeb-feedback.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10064,
+      "runtime": "dotnet8",
+      "project_or_entry": "Api/Api.csproj",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql"
+      ],
+      "effects": [
+        "Startup calls database migration/seeding unless SKIP_DB_INIT=true; preserve the existing reviewed skip policy."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "info.title": "Feedback Service API",
+          "info.version": "v1"
+        },
+        "required_true": [],
+        "path": "/swagger/v1/swagger.json",
+        "kind": "json",
+        "strength": "documentation",
+        "required_keys": [
+          "openapi",
+          "paths"
+        ]
+      },
+      "notes": [
+        "Uses the generated JSON documentation route instead of a generic Swagger HTML page; success proves documentation only.",
+        "No dependency readiness route is established in source; DB/auth/ratings need separate authorized read-only evidence."
+      ],
+      "source_refs": [
+        "feedback-service/Api/Startup.cs:37",
+        "feedback-service/Api/Startup.cs:119",
+        "feedback-service/Api/Startup.cs:125",
+        "feedback-service/Application/PrepareDatabase.cs:18"
+      ]
+    },
+    {
+      "id": "remote-user-preferences",
+      "repository": "olivium-dev/remote-user-preferences",
+      "default_branch": "master",
+      "unit": "jeeb-rup.service",
+      "manager": {
+        "scope": "user",
+        "user": "ec2-user",
+        "uid": 1001
+      },
+      "port": 10067,
+      "runtime": "rust",
+      "project_or_entry": "src/main.rs",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql"
+      ],
+      "effects": [
+        "Startup initializes tables; failures can be logged while the HTTP listener still starts.",
+        "Startup logs the raw database URL; never collect or publish raw journals.",
+        "Listener is hardcoded to0.0.0.0 despite a configurable HOST setting; setting HOST alone does not isolate it."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "openapi": "3.0.3",
+          "info.title": "remote-user-preferences",
+          "info.version": "0.1.0"
+        },
+        "required_true": [],
+        "path": "/api-docs/openapi.json",
+        "kind": "json",
+        "strength": "documentation",
+        "required_keys": [
+          "openapi",
+          "info",
+          "paths"
+        ]
+      },
+      "notes": [
+        "The existing MSI native binary is named remote-user-preferences; the source Cargo bin target and Docker binary are named rust-remote-user-preferences. Docker specifies Rust1.89; do not infer the native executable name from it.",
+        "Cargo.lock exists but the Docker build omits --locked; a release must attest frozen dependency resolution.",
+        "The user-systemd manager is ec2-user uid1001; do not address the system manager.",
+        "Locked utoipa4.2.3 emits OpenAPI3.0.3; utoipa-gen4.3.1 takes the unoverridden document title/version from Cargo package metadata. The checked-in postman/swagger.json has different historical metadata and is not current-source authority. An incumbent mismatch requires reconciliation, not a relaxed probe.",
+        "No database readiness health route is established."
+      ],
+      "source_refs": [
+        "remote-user-preferences/src/main.rs:20",
+        "remote-user-preferences/src/main.rs:27",
+        "remote-user-preferences/src/main.rs:35",
+        "remote-user-preferences/src/routes.rs:74",
+        "remote-user-preferences/Dockerfile:2",
+        "remote-user-preferences/Cargo.toml:1",
+        "remote-user-preferences/Cargo.lock:2155"
+      ]
+    },
+    {
+      "id": "ban-service",
+      "repository": "olivium-dev/ban-service",
+      "default_branch": "main",
+      "unit": "jeeb-ban.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10065,
+      "runtime": "rust",
+      "project_or_entry": "src/main.rs",
+      "depends_on": [],
+      "external_dependencies": [
+        "redis"
+      ],
+      "effects": [
+        "Startup reconciles the configured prohibited-items file into Redis."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "healthy",
+          "service": "ban-service"
+        },
+        "required_true": [],
+        "path": "/health",
+        "kind": "json",
+        "strength": "liveness"
+      },
+      "notes": [
+        "GET /health is the process-only handler, not the separate BanHandler Redis-check method.",
+        "Build uses cargo build --release --locked --bin ban-service; preserve Redis namespace and authoritative moderation files."
+      ],
+      "source_refs": [
+        "ban-service/src/main.rs:127",
+        "ban-service/src/main.rs:184",
+        "ban-service/src/handlers/health_handler.rs:5",
+        "ban-service/Dockerfile:19"
+      ]
+    },
+    {
+      "id": "kyc-service",
+      "repository": "olivium-dev/kyc-service",
+      "default_branch": "main",
+      "unit": "jeeb-kyc.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10074,
+      "runtime": "dotnet8",
+      "project_or_entry": "src/KycService/KycService.csproj",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql"
+      ],
+      "effects": [
+        "Schema preparation is a separate reviewed operation; preserve existing schema and authentication settings."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {},
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "text",
+        "strength": "dependency",
+        "text": "Healthy"
+      },
+      "notes": [
+        "Readiness checks PostgreSQL and its schema sentinel, not KYC review or role propagation."
+      ],
+      "source_refs": [
+        "kyc-service/src/KycService/Program.cs:37",
+        "kyc-service/src/KycService/Program.cs:79"
+      ]
+    },
+    {
+      "id": "notification-service",
+      "repository": "olivium-dev/notification-service",
+      "default_branch": "main",
+      "unit": "jeeb-notification.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10026,
+      "runtime": "python",
+      "project_or_entry": "main:app",
+      "depends_on": [
+        "push-notification"
+      ],
+      "external_dependencies": [
+        "mongodb",
+        "credential-files"
+      ],
+      "effects": [
+        "Startup creates indexes, including TTL and durable-dispatch indexes.",
+        "Configured normalization requires its explicit quiescence gate; configured dispatch workers can deliver existing notifications."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ready",
+          "database": "connected",
+          "push_delivery": "ready",
+          "checks.push-relay-credential.status": "healthy",
+          "checks.push-relay-reachability.status": "healthy"
+        },
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "json",
+        "strength": "dependency",
+        "required_keys": [
+          "profile.sha256",
+          "profile.notification_types",
+          "profile.push_routing_types"
+        ]
+      },
+      "notes": [
+        "Preserve the actual loaded profile hash/counts separately; this catalog does not invent an authorized profile digest.",
+        "Relay readiness is an authenticated non-delivering GET and may use a short cache; it does not prove device delivery.",
+        "The repository MSI Swarm adapter uses11026/11027, not this existing native owner on10026; do not apply that adapter here.",
+        "Python native incumbent resolves to3.12; Docker is3.11.16. requirements.lock and requirements-build.lock use hashes."
+      ],
+      "source_refs": [
+        "notification-service/main.py:390",
+        "notification-service/main.py:1234",
+        "notification-service/main.py:2240",
+        "notification-service/core/relay_readiness.py:24",
+        "notification-service/scripts/msi_container_rollout.sh:9"
+      ]
+    },
+    {
+      "id": "push-notification",
+      "repository": "olivium-dev/push-notification",
+      "default_branch": "main",
+      "unit": "jeeb-push.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10040,
+      "runtime": "python",
+      "project_or_entry": "app.main:app",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql",
+        "firebase-messaging",
+        "credential-files"
+      ],
+      "effects": [
+        "Startup initializes the database unless SKIP_DB_INIT is enabled; initialization errors may not prevent serving.",
+        "Configured dispatch cleanup/retry tasks can modify existing work and contact Firebase."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ready",
+          "firebase_project_id": "jeeb-5a293"
+        },
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "json",
+        "strength": "dependency"
+      },
+      "notes": [
+        "Readiness proves DB/scoped-caller/Firebase configuration, not message receipt.",
+        "Preserve required-pipeline/auth mode and canonical Firebase key custody; requirements are not fully pinned."
+      ],
+      "source_refs": [
+        "push-notification/app/main.py:27",
+        "push-notification/app/main.py:68",
+        "push-notification/app/main.py:98"
+      ]
+    },
+    {
+      "id": "chat-service",
+      "repository": "olivium-dev/chat-service",
+      "default_branch": "main",
+      "unit": "jeeb-chat.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 5803,
+      "runtime": "dotnet8",
+      "project_or_entry": "ChatService.API/ChatService.API.csproj",
+      "depends_on": [],
+      "external_dependencies": [
+        "firebase-firestore",
+        "credential-files"
+      ],
+      "effects": [
+        "Readiness performs a bounded read of the dedicated deployment-readiness Firestore collection.",
+        "Normal Jeeb chat transport remains Firebase-only; do not enable legacy websocket fan-out."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "projectId": "jeeb-5a293",
+          "databaseId": "(default)",
+          "mode": "firestore"
+        },
+        "required_true": [
+          "ok"
+        ],
+        "path": "/api/Health/firebase",
+        "kind": "json",
+        "strength": "dependency",
+        "required_keys": [
+          "latencyMs"
+        ],
+        "numeric_min": {
+          "latencyMs": 0
+        }
+      },
+      "notes": [
+        "Identity is read from the actual Firestore client, not echoed config. Probe success does not prove two-party delivery or valid custom-token minting.",
+        "Preserve the verified Firebase identity ON configuration and loopback-only5803 listener.",
+        "The companion /api/Health/check configuration gate is also available; do not replace this read with that weaker probe."
+      ],
+      "source_refs": [
+        "chat-service/ChatService.API/Controllers/HealthController.cs:78",
+        "chat-service/ChatService.API/Health/FirestoreReadinessProbe.cs:61",
+        "chat-service/ChatService.API/Program.cs:382"
+      ]
+    },
+    {
+      "id": "cdn-service",
+      "repository": "olivium-dev/cdn-service",
+      "default_branch": "master",
+      "unit": "jeeb-cdn.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10072,
+      "runtime": "dotnet8",
+      "project_or_entry": "CDN.csproj",
+      "depends_on": [],
+      "external_dependencies": [
+        "durable-media-storage"
+      ],
+      "effects": [
+        "Public /health/ready can create a directory and create/delete a storage probe; it is excluded from this zero-write catalog probe.",
+        "Preserve public-media storage and keep PrivateArtifacts:Enabled=false on the public instance."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ok"
+        },
+        "required_true": [],
+        "path": "/health/live",
+        "kind": "json",
+        "strength": "liveness"
+      },
+      "notes": [
+        "This entry is the existing public-media owner only; optional private-artifact instance is auxiliary and unselected.",
+        "A liveness pass does not establish storage readiness or permit changing storage backends."
+      ],
+      "source_refs": [
+        "cdn-service/Program.cs:111",
+        "cdn-service/Program.cs:135",
+        "cdn-service/PrivateArtifacts/README.md"
+      ]
+    },
+    {
+      "id": "geolocation-service",
+      "repository": "olivium-dev/geolocation-service",
+      "default_branch": "main",
+      "unit": "jeeb-geolocation.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10060,
+      "runtime": "python",
+      "project_or_entry": "app.main:app",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql"
+      ],
+      "effects": [
+        "Startup initializes database tables unless its existing skip policy prevents it.",
+        "Configured auto-offline and GPS-retention sweepers can change presence and delete expired GPS records."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ok"
+        },
+        "required_true": [],
+        "path": "/health",
+        "kind": "json",
+        "strength": "liveness"
+      },
+      "notes": [
+        "Python3.12; requirements include ranges. Preserve retention, notifier, auth and database settings.",
+        "Process health does not prove saved coordinates, realtime ingest or recipient delivery."
+      ],
+      "source_refs": [
+        "geolocation-service/app/main.py:37",
+        "geolocation-service/app/main.py:129",
+        "geolocation-service/app/database.py:49"
+      ]
+    },
+    {
+      "id": "delivery-service",
+      "repository": "olivium-dev/delivery-service",
+      "default_branch": "main",
+      "unit": "jeeb-delivery.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 5802,
+      "runtime": "go",
+      "project_or_entry": "main.go",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql"
+      ],
+      "effects": [
+        "Normal startup prepares schema unless the reviewed SKIP_DB_INIT attestation path is selected.",
+        "TTL, delivery-expiry, cron and settlement-outbox workers can process existing state and issue callbacks.",
+        "Schema/ownership reconciliation binaries are separate operator tools and must not run during deployment."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "healthy"
+        },
+        "required_true": [],
+        "path": "/health",
+        "kind": "json",
+        "strength": "liveness"
+      },
+      "notes": [
+        "Go1.23.0/toolchain1.23.4. Preserve actor ownership, schema and callback configuration.",
+        "The health endpoint does not query PostgreSQL or prove event/callback operation."
+      ],
+      "source_refs": [
+        "delivery-service/main.go:82",
+        "delivery-service/main.go:362",
+        "delivery-service/internal/api/handlers.go:59",
+        "delivery-service/Dockerfile:18"
+      ]
+    },
+    {
+      "id": "offer-service",
+      "repository": "olivium-dev/offer-service",
+      "default_branch": "main",
+      "unit": "jeeb-offer.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 5801,
+      "runtime": "elixir",
+      "project_or_entry": "offer_service",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql"
+      ],
+      "effects": [
+        "The Docker server wrapper runs Ecto migrations before starting; generic native deployment must not invoke that wrapper implicitly.",
+        "The supervision tree starts Oban; existing expiry/callback jobs may execute."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ready"
+        },
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "json",
+        "strength": "dependency"
+      },
+      "notes": [
+        "Build contract Elixir1.17.3/OTP27; release offer_service. Preserve current MIX_ENV=prod and exact ERTS/libc compatibility.",
+        "Readiness performs SELECT1 only; schema and saga/callback correctness remain separate gates."
+      ],
+      "source_refs": [
+        "offer-service/Dockerfile:54",
+        "offer-service/lib/offer_service/application.ex:7",
+        "offer-service/lib/offer_service_web/controllers/health_controller.ex:8"
+      ]
+    },
+    {
+      "id": "heart-beat",
+      "repository": "olivium-dev/heart-beat",
+      "default_branch": "main",
+      "unit": "jeeb-heartbeat.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10075,
+      "runtime": "go",
+      "project_or_entry": "cmd/heart-beat/main.go",
+      "depends_on": [],
+      "external_dependencies": [
+        "redis"
+      ],
+      "effects": [
+        "The optional keyspace sweeper changes presence state when enabled.",
+        "JWT/JWKS construction failure can leave JWT handling disabled while the process continues; readiness alone does not prove authentication."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ready"
+        },
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "json",
+        "strength": "dependency"
+      },
+      "notes": [
+        "Go1.23.4. Preserve service authentication, JWKS issuer/audience, Redis namespace and sweep flags.",
+        "Readiness is Redis connectivity, not authenticated presence operation."
+      ],
+      "source_refs": [
+        "heart-beat/cmd/heart-beat/main.go:36",
+        "heart-beat/cmd/heart-beat/main.go:75",
+        "heart-beat/internal/api/rest.go:24"
+      ]
+    },
+    {
+      "id": "settlement-service",
+      "repository": "olivium-dev/settlement-service",
+      "default_branch": "main",
+      "unit": "settlement-service.service",
+      "manager": {
+        "scope": "user",
+        "user": "ouday",
+        "uid": 1000
+      },
+      "port": 10078,
+      "runtime": "dotnet8",
+      "project_or_entry": "src/SettlementService/SettlementService.csproj",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql",
+        "credential-files",
+        "timezone-database"
+      ],
+      "effects": [
+        "The configured batching worker can attach existing settlements to batches.",
+        "Schema/migration and financial operations require separate authority; a deployment must not execute them."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {},
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "text",
+        "strength": "dependency",
+        "text": "Healthy"
+      },
+      "notes": [
+        "Readiness includes auth configuration, PostgreSQL/schema and Asia/Beirut timezone support.",
+        "The user-systemd manager is ouday uid1000. Preserve that manager and existing aliases/credential-file resolution.",
+        "default_branch main was independently refreshed through GitHub by the coordinating operator."
+      ],
+      "source_refs": [
+        "settlement-service/src/SettlementService/Program.cs:15",
+        "settlement-service/src/SettlementService/Program.cs:47",
+        "settlement-service/src/SettlementService/Program.cs:61",
+        "settlement-service/src/SettlementService/Program.cs:100",
+        "settlement-service/src/SettlementService/Background/BatchingWorker.cs:20"
+      ]
+    },
+    {
+      "id": "bundler-service",
+      "repository": "olivium-dev/bundler-service",
+      "default_branch": "main",
+      "unit": "jeeb-bundler-native.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 11058,
+      "runtime": "go",
+      "project_or_entry": "cmd/bundler/main.go",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql"
+      ],
+      "effects": [
+        "Startup unconditionally runs serialized forward-only database migrations before serving.",
+        "The document-import binary is a separate data-writing operator tool, not a service startup command."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "READY",
+          "checks.database": "UP"
+        },
+        "required_true": [],
+        "path": "/health/ready",
+        "kind": "json",
+        "strength": "dependency"
+      },
+      "notes": [
+        "Go1.23.0/toolchain1.23.4. Deployment is blocked unless startup migration effects have a separately reviewed approval; there is no assumed skip flag.",
+        "The current unit's declared current-symlink directory differs from actual immutable CWD; attest actual process and argv.",
+        "The valid health body has no service field; never require an invented one."
+      ],
+      "source_refs": [
+        "bundler-service/cmd/bundler/main.go:64",
+        "bundler-service/internal/handlers/health_handler.go:53",
+        "bundler-service/Dockerfile:13"
+      ]
+    },
+    {
+      "id": "realtime-comunication-service",
+      "repository": "olivium-dev/realtime-comunication-service",
+      "default_branch": "main",
+      "unit": "jeeb-realtime.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 5804,
+      "runtime": "elixir",
+      "project_or_entry": "live_comm",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql",
+        "redis",
+        "credential-files"
+      ],
+      "effects": [
+        "The Docker server wrapper invokes release migrations; do not reuse it under a no-migration deployment.",
+        "Startup initializes replay/rate-limit/presence processes; preserve Redis namespace, retention and drain state."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ready"
+        },
+        "required_true": [
+          "checks.database",
+          "checks.redis",
+          "checks.pubsub",
+          "checks.draining"
+        ],
+        "path": "/health/ready",
+        "kind": "json",
+        "strength": "dependency"
+      },
+      "notes": [
+        "The existing native process is MIX_ENV=dev with external ERTS15.2; a production release is not a configuration-equivalent replacement by default.",
+        "Preserve loopback binding, authenticated WSS route, keys and Redis6380 configuration.",
+        "Full current main is not attested by the prior narrow bind/Redis backports. Health does not prove WSS101, channel join or recipient coordinates.",
+        "Jeeb chat remains Firebase-only; do not restore legacy realtime chat listeners."
+      ],
+      "source_refs": [
+        "realtime-comunication-service/lib/live_comm_web/controllers/health_controller.ex:30",
+        "realtime-comunication-service/Dockerfile:47",
+        "jeeb-infrastructure/deploy/msi/realtime/PRIVATE-LISTENER-WSS.md"
+      ]
+    },
+    {
+      "id": "voice-transcription-service",
+      "repository": "olivium-dev/voice-transcription-service",
+      "default_branch": "main",
+      "unit": "jeeb-voice-candidate.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10063,
+      "runtime": "python",
+      "project_or_entry": "app.main:app",
+      "depends_on": [],
+      "external_dependencies": [
+        "openai-transcription",
+        "durable-media-storage",
+        "retry-queue",
+        "ffmpeg",
+        "credential-files"
+      ],
+      "effects": [
+        "The configured retry worker can process existing jobs and make paid provider calls.",
+        "Preserve the existing voice-route oneshot and localhost10062-to10063 redirection; deployment does not retire another unit."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ok",
+          "checks.voice_transcription": "ok"
+        },
+        "required_true": [],
+        "path": "/readyz",
+        "kind": "json",
+        "strength": "configuration",
+        "required_keys": [
+          "checks"
+        ]
+      },
+      "notes": [
+        "Python3.12 with uv.lock and ffmpeg; preserve the Linux venv/provider configuration.",
+        "Provider readiness is configuration-only and can also pass in fake mode, so separately require the preserved real-provider mode; never set WHISPER_FAKE_TRANSCRIBE=1.",
+        "10063 is the owned listener;10062 is the gateway route, not an expected second application listener."
+      ],
+      "source_refs": [
+        "voice-transcription-service/app/routes/health.py:45",
+        "voice-transcription-service/app/routes/health.py:92",
+        "voice-transcription-service/app/main.py:93",
+        "voice-transcription-service/scripts/jeeb-voice-deploy-admin:4"
+      ]
+    },
+    {
+      "id": "contract-signing-service",
+      "repository": "olivium-dev/contract-signing-service",
+      "default_branch": "main",
+      "unit": "jeeb-contract-signing.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10071,
+      "runtime": "python",
+      "project_or_entry": "app.main:app",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql",
+        "contract-template-files"
+      ],
+      "effects": [
+        "Startup initializes the database and may seed contract templates when configured."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "healthy"
+        },
+        "required_true": [],
+        "path": "/health",
+        "kind": "json",
+        "strength": "liveness",
+        "required_keys": [
+          "version"
+        ]
+      },
+      "notes": [
+        "Repository Docker Python3.11 differs from current native Python3.12. Preserve templates, signed-document data and provider settings.",
+        "Liveness/version does not prove PostgreSQL or contract operations."
+      ],
+      "source_refs": [
+        "contract-signing-service/app/main.py:48",
+        "contract-signing-service/app/main.py:63",
+        "contract-signing-service/app/database.py:34"
+      ]
+    },
+    {
+      "id": "form-builder-service",
+      "repository": "olivium-dev/form-builder-service",
+      "default_branch": "main",
+      "unit": "jeeb-form-builder.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10070,
+      "runtime": "python",
+      "project_or_entry": "app/main.py",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql",
+        "form-template-files"
+      ],
+      "effects": [
+        "Startup deletes/regenerates generated template files, preprocesses URLs and initializes the database.",
+        "Configured template acquisition may access an external repository; pin the approved source and preserve existing templates."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "info.title": "Form Builder Microservice",
+          "info.version": "1.0.0"
+        },
+        "required_true": [],
+        "path": "/openapi.json",
+        "kind": "json",
+        "strength": "documentation",
+        "required_keys": [
+          "openapi",
+          "paths"
+        ]
+      },
+      "notes": [
+        "Launch contract is python -m app.main with explicit host/port; Docker Python3.11 differs from native3.12.",
+        "Documentation does not prove DB or required dynamic templates; preserve ROOT_PATH and template selection."
+      ],
+      "source_refs": [
+        "form-builder-service/app/main.py:83",
+        "form-builder-service/app/main.py:183",
+        "form-builder-service/app/main.py:242",
+        "form-builder-service/app/config.py"
+      ]
+    },
+    {
+      "id": "compliment-service",
+      "repository": "olivium-dev/compliment-service",
+      "default_branch": "master",
+      "unit": "jeeb-compliment.service",
+      "manager": {
+        "scope": "system"
+      },
+      "port": 10036,
+      "runtime": "python",
+      "project_or_entry": "main:app",
+      "depends_on": [],
+      "external_dependencies": [
+        "postgresql"
+      ],
+      "effects": [
+        "Import-time SQLAlchemy create_all may mutate schema before the HTTP server starts."
+      ],
+      "probe": {
+        "status": 200,
+        "equals": {
+          "status": "ok"
+        },
+        "required_true": [],
+        "path": "/health",
+        "kind": "json",
+        "strength": "liveness"
+      },
+      "notes": [
+        "Docker Python3.13 differs from native3.12 and requirements are mostly unpinned.",
+        "No database dependency readiness route is established."
+      ],
+      "source_refs": [
+        "compliment-service/main.py:15",
+        "compliment-service/main.py:40",
+        "compliment-service/Dockerfile:1"
+      ]
+    }
+  ],
+  "exclusions": [
+    {
+      "id": "matching",
+      "repository": "olivium-dev/matching",
+      "default_branch": "main",
+      "kind": "retired-owner",
+      "activate": false,
+      "reason": "Delivery owns matching in the active Jeeb contract. Existing jeeb-matching.service is active in the observed MSI inventory; preserve it untouched, neither redeploy nor stop it.",
+      "observed_unit": "jeeb-matching.service",
+      "source_refs": [
+        "jeeb-infrastructure/deploy/msi/FULL-DEVELOPMENT-BACKEND.md:62",
+        "matching/app/main.py:39"
+      ]
+    },
+    {
+      "id": "unified_payment_gateway",
+      "repository": "olivium-dev/unified_payment_gateway",
+      "default_branch": "main",
+      "kind": "excluded-payment-owner",
+      "activate": false,
+      "reason": "The Jeeb COD-only fleet does not use this shared payment gateway. Its migrations, Oban jobs, providers and transaction/webhook routes are outside this deployment.",
+      "source_refs": [
+        "jeeb-infrastructure/deploy/msi/FULL-DEVELOPMENT-BACKEND.md:62",
+        "unified_payment_gateway/unified_payment_gateway/Dockerfile"
+      ]
+    },
+    {
+      "id": "catalog-service",
+      "repository": "olivium-dev/catalog-service",
+      "default_branch": "master",
+      "kind": "excluded-owner",
+      "activate": false,
+      "reason": "Catalog is outside the active24 contract. The repository contains an application skeleton; its existence is not activation authority.",
+      "source_refs": [
+        "catalog-service/Api/Program.cs:15",
+        "jeeb-infrastructure/deploy/msi/FULL-DEVELOPMENT-BACKEND.md:62"
+      ]
+    },
+    {
+      "id": "masked-call-service",
+      "repository": "olivium-dev/masked-call-service",
+      "default_branch": "main",
+      "kind": "local-only-owner",
+      "activate": false,
+      "reason": "Outside the active fleet. Native .NET application initializes schema and a DID pool on startup; enabling calls is a separate decision.",
+      "source_refs": [
+        "masked-call-service/README.md",
+        "jeeb-infrastructure/deploy/msi/FULL-DEVELOPMENT-BACKEND.md:62"
+      ]
+    }
+  ],
+  "auxiliary": [
+    {
+      "id": "background-worker",
+      "repository": "olivium-dev/background-worker",
+      "default_branch": "main",
+      "kind": "operational-worker",
+      "activate": false,
+      "reason": "Not a mandatory24 fleet member. Go1.25/toolchain1.25.12; startup runs migrations and schedules configured existing jobs with possible external side effects.",
+      "runtime": "go",
+      "project_or_entry": "cmd/main.go",
+      "source_refs": [
+        "background-worker/cmd/main.go:46",
+        "background-worker/internal/api/server.go:54"
+      ]
+    },
+    {
+      "id": "cdn-private-artifacts",
+      "repository": "olivium-dev/cdn-service",
+      "default_branch": "master",
+      "kind": "optional-private-owner",
+      "activate": false,
+      "reason": "Optional separate private-only instance, not a25th activated owner and never an automatic replacement for public CDN. Requires a separate approved identity, loopback listener, storage root and purpose-specific credentials.",
+      "runtime": "dotnet8",
+      "project_or_entry": "CDN.csproj",
+      "unit": null,
+      "port": null,
+      "probe": {
+        "path": "/health/ready",
+        "status": 200,
+        "kind": "json",
+        "equals": {
+          "status": "ready",
+          "owner": "private-artifacts"
+        },
+        "required_true": [],
+        "strength": "configuration"
+      },
+      "effects": [
+        "Only an explicitly enabled PrivateOnly instance may expose the private module.",
+        "Encrypted storage and authentication require separate reviewed provisioning; no credential generation or live storage writes occur from this catalog."
+      ],
+      "source_refs": [
+        "cdn-service/Program.cs:114",
+        "cdn-service/PrivateArtifacts/README.md"
+      ]
+    },
+    {
+      "id": "ephemeral-runner",
+      "repository": "olivium-dev/ephemeral-runner",
+      "default_branch": "main",
+      "kind": "operator-tooling",
+      "activate": false,
+      "reason": "Bash/SSH/runner provisioning scripts, not a standalone business API. Preserve existing runner and leased-environment controls."
+    },
+    {
+      "id": "jeeb-ephemeral-platform",
+      "repository": "olivium-dev/jeeb-ephemeral-platform",
+      "default_branch": "main",
+      "kind": "operator-control-plane",
+      "activate": false,
+      "reason": "Node22 control plane can provision, seed, deploy and destroy environments. It is not a fleet owner and must not be exposed or retargeted implicitly.",
+      "runtime": "node",
+      "project_or_entry": "server.mjs",
+      "source_refs": [
+        "jeeb-ephemeral-platform/start.sh:48",
+        "jeeb-ephemeral-platform/server.mjs:1813"
+      ]
+    },
+    {
+      "id": "jeeb-mock-backend",
+      "repository": "olivium-dev/jeeb-mock-backend",
+      "default_branch": "main",
+      "kind": "synthetic-test-server",
+      "activate": false,
+      "reason": "Node22 in-memory mock owners on4010. Never substitute mock health, data or monetary behavior for MSI owners.",
+      "runtime": "node",
+      "project_or_entry": "dist/server.js",
+      "source_refs": [
+        "jeeb-mock-backend/Dockerfile:17",
+        "jeeb-mock-backend/src/server.ts:85"
+      ]
+    },
+    {
+      "id": "jeeb-test-console",
+      "repository": "olivium-dev/jeeb-test-console",
+      "default_branch": "main",
+      "kind": "operator-frontend-and-proxy",
+      "activate": false,
+      "reason": "Bun1.3.14/Nuxt console has server-side token and seed capabilities; its canonical outbound policy is not an MSI target override.",
+      "source_refs": [
+        "jeeb-test-console/README.md"
+      ]
+    },
+    {
+      "id": "jeeb-cms",
+      "repository": "olivium-dev/jeeb-cms",
+      "default_branch": "main",
+      "kind": "frontend",
+      "activate": false,
+      "reason": "pnpm/Turbo static web frontend with separate MSI frontend deployment assets, not a backend owner.",
+      "source_refs": [
+        "jeeb-infrastructure/deploy/msi/jeeb-cms/README.md"
+      ]
+    },
+    {
+      "id": "jeeb-admin",
+      "repository": "olivium-dev/jeeb-admin",
+      "default_branch": "main",
+      "kind": "frontend",
+      "activate": false,
+      "reason": "Vite/React frontend, not an application-owner daemon."
+    },
+    {
+      "id": "jeeb-mobile",
+      "repository": "olivium-dev/jeeb-mobile",
+      "default_branch": "main",
+      "kind": "mobile-client",
+      "activate": false,
+      "reason": "Flutter Android/iOS application, not an MSI daemon. Build, signing and physical E2E require their separate approved workflow."
+    },
+    {
+      "id": "omds-flutter",
+      "repository": "olivium-dev/omds-flutter",
+      "default_branch": "main",
+      "kind": "client-library",
+      "activate": false,
+      "reason": "Flutter design system/library, not an MSI daemon."
+    },
+    {
+      "id": "jeeb-mind-map",
+      "repository": "olivium-dev/jeeb-mind-map",
+      "default_branch": "main",
+      "kind": "visualization-and-stdio-tool",
+      "activate": false,
+      "reason": "Web visualization and stdio MCP server, not an HTTP fleet owner."
+    },
+    {
+      "id": "jeeb-static-apis",
+      "repository": "olivium-dev/jeeb-static-apis",
+      "default_branch": "main",
+      "kind": "static-configuration-site",
+      "activate": false,
+      "reason": "Static encrypted JSON/environment index and Pages build tooling. Its static health file is not service readiness."
+    },
+    {
+      "id": "jeeb-infrastructure",
+      "repository": "olivium-dev/jeeb-infrastructure",
+      "default_branch": "main",
+      "kind": "infrastructure-tooling",
+      "activate": false,
+      "reason": "Owns deployment/ingress/observability assets; one-time provisioning and legacy Compose are not safe generic application updates."
+    },
+    {
+      "id": "api-screen-map-site",
+      "repository": null,
+      "default_branch": "main",
+      "kind": "local-static-site",
+      "activate": false,
+      "reason": "Local website artifact; no backend owner or verified organization remote is inferred."
+    },
+    {
+      "id": "architecture-review",
+      "repository": null,
+      "default_branch": "main",
+      "kind": "local-static-site",
+      "activate": false,
+      "reason": "Local architecture review website; not an MSI application owner."
+    },
+    {
+      "id": "pipeline-guide-site",
+      "repository": null,
+      "default_branch": "main",
+      "kind": "local-static-site",
+      "activate": false,
+      "reason": "Local pipeline documentation website; not an MSI application owner."
+    },
+    {
+      "id": "jeeb-flow-review",
+      "repository": null,
+      "default_branch": null,
+      "kind": "local-review-application",
+      "activate": false,
+      "reason": "Local Node review application; no canonical top-level Git registration or fleet activation authority was established."
+    },
+    {
+      "id": "jeeb-mobile-pipeline",
+      "repository": null,
+      "default_branch": null,
+      "kind": "excluded-checkout",
+      "activate": false,
+      "reason": "Separate mobile pipeline checkout/task is explicitly out of scope; it is not an additional repository or MSI backend owner."
+    }
+  ],
+  "external_dependencies": [
+    {
+      "id": "postgresql",
+      "kind": "datastore",
+      "activate": false,
+      "notes": [
+        "Identify exact live instances, versions, ports, roles, database/schema names and persistent mounts before any owner rollout.",
+        "Legacy local-dev Compose PostgreSQL15/16 images and other-host database documents are not MSI replacement authority."
+      ]
+    },
+    {
+      "id": "mongodb",
+      "kind": "datastore",
+      "activate": false,
+      "notes": [
+        "Notification requires its existing isolated MongoDB identity and indexes; no automatic replacement, migration or data move."
+      ]
+    },
+    {
+      "id": "redis",
+      "kind": "datastore",
+      "activate": false,
+      "notes": [
+        "Preserve existing instances, logical DBs and namespaces. The recorded dedicated MSI realtime endpoint is loopback6380; it is not a global Redis default.",
+        "Do not flush, recreate containers or switch native/container ownership."
+      ]
+    },
+    {
+      "id": "firebase-firestore",
+      "kind": "external-provider",
+      "activate": false,
+      "notes": [
+        "Jeeb canonical project jeeb-5a293 and default Firestore database; preserve scoped credential custody, IAM and rules."
+      ]
+    },
+    {
+      "id": "firebase-messaging",
+      "kind": "external-provider",
+      "activate": false,
+      "notes": [
+        "Canonical Jeeb Firebase project; configuration readiness does not prove actual background device delivery."
+      ]
+    },
+    {
+      "id": "durable-media-storage",
+      "kind": "storage",
+      "activate": false,
+      "notes": [
+        "Preserve existing provider, buckets/prefixes, mounts and media ownership. Public CDN writable health is not a zero-write probe."
+      ]
+    },
+    {
+      "id": "private-artifact-store",
+      "kind": "optional-owner-dependency",
+      "activate": false,
+      "notes": [
+        "The gateway private-export capability requires a separately approved private-only owner; do not substitute the public-media API or create credentials automatically."
+      ]
+    },
+    {
+      "id": "credential-files",
+      "kind": "protected-runtime-input",
+      "activate": false,
+      "notes": [
+        "Validate metadata, authorized identity and presence privately; never serialize contents, raw environment values, DSNs, tokens or keys."
+      ]
+    },
+    {
+      "id": "twilio",
+      "kind": "external-provider",
+      "activate": false,
+      "notes": [
+        "Preserve approved OTP provider/mode; no SMS send is part of a deployment probe."
+      ]
+    },
+    {
+      "id": "openai-transcription",
+      "kind": "external-provider",
+      "activate": false,
+      "notes": [
+        "Preserve authorized provider/key custody; no paid provider call or fake-mode change from readiness."
+      ]
+    },
+    {
+      "id": "retry-queue",
+      "kind": "durable-work",
+      "activate": false,
+      "notes": [
+        "Resolve the service's configured queue implementation and isolate existing work; startup consumers can cause external effects."
+      ]
+    },
+    {
+      "id": "ffmpeg",
+      "kind": "runtime-tool",
+      "activate": false,
+      "notes": [
+        "Voice requires an attested Linux ffmpeg installation; catalog does not install host packages."
+      ]
+    },
+    {
+      "id": "timezone-database",
+      "kind": "runtime-data",
+      "activate": false,
+      "notes": [
+        "Settlement readiness checks Asia/Beirut support; retain compatible timezone data."
+      ]
+    },
+    {
+      "id": "contract-template-files",
+      "kind": "durable-configuration",
+      "activate": false,
+      "notes": [
+        "Preserve approved template files, database ownership and seed flags."
+      ]
+    },
+    {
+      "id": "form-template-files",
+      "kind": "durable-configuration",
+      "activate": false,
+      "notes": [
+        "Pin template source; startup generation/deletion and optional repository fetches require explicit side-effect approval."
+      ]
+    },
+    {
+      "id": "nginx-cloudflared",
+      "kind": "ingress",
+      "activate": false,
+      "notes": [
+        "Existing host units, loaded includes, static commands and route identities are separate preservation gates. No broad reload or retargeting from application deployment."
+      ]
+    },
+    {
+      "id": "optional-observability",
+      "kind": "infrastructure",
+      "activate": false,
+      "notes": [
+        "Legacy Compose contains Prometheus/Grafana/OTel/Loki/Promtail/cAdvisor/node-exporter; some read host logs, filesystems or Docker sockets. No implicit installation or privileged host mounts."
+      ]
+    },
+    {
+      "id": "existing-standalone-containers",
+      "kind": "preserved-infrastructure",
+      "activate": false,
+      "notes": [
+        "Existing MSI standalone containers remain untouched even when the active owner is native systemd."
+      ]
+    }
+  ],
+  "source_refs": [
+    "jeeb-infrastructure/deploy/msi/FULL-DEVELOPMENT-BACKEND.md",
+    "jeeb-infrastructure/README.md",
+    "jeeb-infrastructure/legacy-compose/docker-compose.yml",
+    "jeeb-infrastructure/legacy-compose/docker-compose.monitoring.yml"
+  ]
+}

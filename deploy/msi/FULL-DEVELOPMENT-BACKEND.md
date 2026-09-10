@@ -161,6 +161,29 @@ listed owner endpoints. Chat, bundler and realtime also passed their strict
 response-shape checks. This is **not 24 functional passes**; documentation and
 liveness-only probe limitations, isolation and physical-device acceptance remain.
 
+### Private tracking listener and local ingress — 2026-09-10 08:42 UTC
+
+The approved operator applied the narrow old-runtime bind-address backport and
+`HTTP_BIND_ADDRESS=127.0.0.1`, preserving port5804, MIX_ENVdev, Redis settings,
+service identity and existing secrets. Realtime remained strict-ready on the
+loopback-only listener. Independent Studio probes established MSI reachability
+on22/80 and connection refusal on5804; chat5803 was not established private by
+that receipt and is not covered by this tracking gate.
+
+Only the exact tracking socket location was inserted into the existing MSI
+nginx server. One nginx reload preserved its master process and all other
+configuration, unit and tunnel identities. Fourteen local rejection probes and
+seven existing-route probes passed; no diagnostic query marker was found in the
+checked nginx logs. See the [exact artifacts and evidence limits](realtime/PRIVATE-LISTENER-WSS.md).
+
+This is **not** a public authenticated WSS101, channel-join or physical-device
+tracking pass. No valid token was used by these ingress checks. The gateway
+descriptor, installed mobile build and full fleet functional acceptance remain
+separate verification gates. Only the minimal runtime-config backport was
+applied: **full realtime main and its Mint dependency update were not deployed**
+by this change. Jeeb chat remains Firebase-only; gateway frameworkProduction and
+its Staging-only websocket-proxy restriction are unchanged.
+
 ### Verified MSI snapshot — 2026-09-09 20:52:22 UTC
 
 Expected host: `ouday-GT70-2OC-2OD`. The running gateway reports framework
@@ -228,9 +251,10 @@ Additional verified facts and limits:
 
 No deployments, restarts, or administrator-rights changes were performed for this
 historical snapshot. Its then-outstanding realtime readiness gap is superseded
-by the correction above. **Full-backend completion remains unverified**: secure
-tracking ingress, isolation, immutable runtime identities and remaining
-functional/readiness gaps still require evidence.
+by the correction above. The later private listener/local ingress evidence does
+not establish public authenticated tracking. **Full-backend completion remains
+unverified**: public authenticated WSS, isolation, immutable runtime identities
+and remaining functional/readiness gaps still require evidence.
 
 Source basis: current gateway client/readiness registrations and service health
 implementations, cross-checked against the active fleet and exclusions in

@@ -51,6 +51,7 @@ target. The current isolated-data baseline and 2026-08-19 cleanup record are in
 | Env        | Deployment Method                              | TLS                         | URL |
 | ---------- | ---------------------------------------------- | --------------------------- | --- |
 | local      | `docker compose` (legacy-compose/)             | none                        | http://localhost:5000 |
+| MSI development | [Required full 24-service backend](deploy/msi/FULL-DEVELOPMENT-BACKEND.md); runtime readiness tracked separately | Public HTTPS; tracking ingress verification pending | https://msi.olivium.space/gateway |
 | staging    | GitHub Actions manual dispatch → Swarm on `.20` | Cloudflare edge + nginx LE | https://app.jeeb.fds-1.com and https://cms.jeeb.fds-1.com |
 | production | GitHub Actions → Swarm (manual + approval)     | Let's Encrypt               | https://jeeb.fds-1.com |
 

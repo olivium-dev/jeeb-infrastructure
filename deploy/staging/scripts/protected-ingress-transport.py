@@ -134,7 +134,7 @@ def session(config, source, password):
             "-o", "ClearAllForwardings=yes", "jeeb-staging-readiness", remote]
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, env=CHILD_ENV)
+                                stderr=subprocess.PIPE, env=CHILD_ENV, bufsize=0)
     except OSError:
         raise TransportError("transport") from None
     selector = selectors.DefaultSelector()
@@ -157,16 +157,29 @@ def session(config, source, password):
                 if key.fileobj is proc.stdout:
                     stdout.extend(chunk)
                     if not verified:
-                        if len(stdout) > 1024:
+                        newline = stdout.find(b"\n")
+                        if (newline < 0 and len(stdout) > 1024) or newline > 1024:
                             raise TransportError()
-                        if b"\n" in stdout:
+                        if newline >= 0:
                             line, rest = bytes(stdout).split(b"\n", 1)
-                            if rest or strict_json(line) != PREFLIGHT:
+                            if strict_json(line) != PREFLIGHT:
                                 raise TransportError()
                             verified = True
-                            stdout.clear()
-                            proc.stdin.write(password + b"\n")
-                            proc.stdin.close()
+                            stdout[:] = rest
+                            try:
+                                # Cached/passwordless sudo can already be emitting
+                                # the report. Never send a password into that stream.
+                                if not rest:
+                                    line = password + b"\n"
+                                    if proc.stdin.write(line) != len(line):
+                                        raise TransportError("transport")
+                            except BrokenPipeError:
+                                # The reviewed collector closes stdin immediately.
+                                # No retry or password-acceptance claim; final report
+                                # schema and exit/status still decide acceptance.
+                                pass
+                            finally:
+                                proc.stdin.close()
         code = proc.wait(timeout=max(0.01, end - time.monotonic()))
         if not verified:
             raise TransportError("preflight")
@@ -198,6 +211,8 @@ def main():
             raise TransportError()
         metadata, source = provenance()
         metadata["collectorSha256"] = COLLECTOR_SHA256
+        stage = "configuration"
+        config = configuration()
         stage = "secret"
         secret = os.environ.pop("STAGING_SUDO_PASSWORD", None)
         if not isinstance(secret, str):
@@ -206,8 +221,6 @@ def main():
         del secret
         if not 1 <= len(password) <= 4096 or any(byte in password for byte in (0, 10, 13)):
             raise TransportError()
-        stage = "configuration"
-        config = configuration()
         stage = "source"
         module = types.ModuleType("protected_collector")
         exec(compile(source, COLLECTOR, "exec"), module.__dict__)
@@ -224,7 +237,11 @@ def main():
     except BaseException as error:
         if isinstance(error, TransportError) and error.stage in ("preflight", "transport", "remote-command", "output"):
             stage = error.stage
-        print(json.dumps({"transportStatus": "unverified", "failureStage": stage}, separators=(",", ":")))
+        failure = json.dumps({"transportStatus": "unverified", "failureStage": stage}, separators=(",", ":"))
+        print(failure)
+        # The workflow redirects stdout to a report file. Preserve only this
+        # fixed projection in failure logs, never remote stderr or exceptions.
+        print(failure, file=sys.stderr)
         return 1
     finally:
         os.environ.pop("STAGING_SUDO_PASSWORD", None)

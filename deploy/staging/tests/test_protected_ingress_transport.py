@@ -49,6 +49,20 @@ try:
   line=json.dumps(pre)
   if mode=="unknown_preflight":line=json.dumps(dict(pre,extra="PRIVATE_PROVIDER_TEXT"))
   if mode=="duplicate_preflight":line=line[:-1]+',"host":"olivium-ephemerals"}}'
+  if mode.startswith("coalesced") or mode.startswith("closed_input"):
+   if mode=="coalesced_wrong_host":line=json.dumps(dict(pre,host="wrong"))
+   if mode=="coalesced_long_preflight":line=" "*1025+line
+   status="unverified" if mode=="coalesced_partial" else "observed-local-consistency"
+   report=json.dumps({{"safe":True,"status":status}})
+   if mode in ("coalesced_invalid","closed_input_invalid"):report="PRIVATE_PROVIDER_TEXT"
+   if mode=="coalesced_unknown":report=json.dumps({{"safe":True,"status":status,"raw":"PRIVATE_PROVIDER_TEXT"}})
+   if mode=="coalesced_large_report":report=" "*2000+report
+   if mode=="coalesced_oversize":report=" "*300000+report
+   if mode.startswith("closed_input"):
+    os.close(0);print(line,flush=True);time.sleep(0.1);print(report,flush=True)
+   else:
+    os.write(1,(line+"\\n"+report+"\\n").encode())
+   sys.exit(1 if mode in ("coalesced_partial","coalesced_wrong_exit","closed_input_wrong_exit") else 0)
   print(line,flush=True)
   if mode in ("host","address","user","unknown_preflight","duplicate_preflight"):
    observations["early"]=bool(sys.stdin.buffer.read())
@@ -71,6 +85,7 @@ finally:
     def invoke(self, mode):
         child, observations = self.fake_ssh(mode)
         out = io.StringIO()
+        err = io.StringIO()
         spawn = subprocess.Popen
         streams = []
         def observed_spawn(*args, **kwargs):
@@ -78,19 +93,20 @@ finally:
             process.stdin = mock.Mock(wraps=process.stdin)
             streams.append(process.stdin)
             return process
-        with mock.patch.object(T, "SSH", str(child)), mock.patch.object(T, "TIMEOUT", 0.5), \
+        with mock.patch.object(T, "SSH", str(child)), mock.patch.object(T, "TIMEOUT", 0.5 if mode == "timeout" else 10), \
              mock.patch.object(T.subprocess, "Popen", side_effect=observed_spawn), \
              mock.patch.object(T, "provenance", return_value=({"reviewedSourceSha": "a" * 40}, VALIDATOR)), \
              mock.patch.object(T, "configuration", return_value=self.root / "config"), \
              mock.patch.dict(os.environ, {"STAGING_SUDO_PASSWORD": PASSWORD, "GH_TOKEN": "private", "UNRELATED_SECRET": "private"}), \
-             mock.patch.object(sys, "argv", [str(SCRIPT)]), contextlib.redirect_stdout(out):
+             mock.patch.object(sys, "argv", [str(SCRIPT)]), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             result = T.main()
             self.assertNotIn("STAGING_SUDO_PASSWORD", os.environ)
         text = out.getvalue()
-        self.assertNotIn(PASSWORD, text)
-        self.assertNotIn("PRIVATE_PROVIDER_TEXT", text)
+        self.assertNotIn(PASSWORD, text + err.getvalue())
+        self.assertNotIn("PRIVATE_PROVIDER_TEXT", text + err.getvalue())
+        self.assertEqual(err.getvalue(), "" if result == 0 else text)
         self.assertEqual(len(streams), 1)
-        if mode in ("host", "address", "user", "unknown_preflight", "duplicate_preflight", "missing_preflight", "timeout", "oversize", "stderr_oversize"):
+        if mode.startswith("coalesced") or mode in ("host", "address", "user", "unknown_preflight", "duplicate_preflight", "missing_preflight", "timeout", "oversize", "stderr_oversize"):
             streams[0].write.assert_not_called()
         else:
             streams[0].write.assert_called_once_with((PASSWORD + "\n").encode())
@@ -117,6 +133,30 @@ finally:
         self.assertEqual(report["report"]["status"], "unverified")
         self.assertTrue(observed["once"])
 
+    def test_coalesced_passwordless_reports_never_receive_password(self):
+        for mode in ("coalesced", "coalesced_partial", "coalesced_large_report"):
+            with self.subTest(mode=mode):
+                code, report, observed = self.invoke(mode)
+                self.assertEqual(code, 0)
+                self.assertEqual(report["collectionResult"], "partial" if mode == "coalesced_partial" else "complete")
+                self.assertFalse(observed["once"])
+                self.assertNotIn("passwordAccepted", report)
+
+    def test_closed_input_broken_pipe_does_not_retry_or_claim_password_acceptance(self):
+        code, report, observed = self.invoke("closed_input")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["collectionResult"], "complete")
+        self.assertFalse(observed["once"])
+        self.assertNotIn("passwordAccepted", report)
+
+    def test_passwordless_and_closed_input_errors_still_fail_closed(self):
+        for mode in ("coalesced_invalid", "coalesced_unknown", "coalesced_wrong_exit", "coalesced_oversize",
+                     "coalesced_wrong_host", "coalesced_long_preflight", "closed_input_invalid", "closed_input_wrong_exit"):
+            with self.subTest(mode=mode):
+                code, report, _ = self.invoke(mode)
+                self.assertEqual(code, 1)
+                self.assertEqual(report["transportStatus"], "unverified")
+
     def test_wrong_or_unknown_preflight_never_receives_password(self):
         for mode in ("host", "address", "user", "unknown_preflight", "duplicate_preflight", "missing_preflight"):
             with self.subTest(mode=mode):
@@ -138,6 +178,7 @@ finally:
         for secret in (None, "", "x\n", "x\r", "x\x00", "x" * 4097):
             with self.subTest(secret=repr(secret)[:20]), mock.patch.object(T.os, "environ", {}), \
                  mock.patch.object(T, "provenance", return_value=({}, VALIDATOR)), \
+                 mock.patch.object(T, "configuration", return_value=self.root / "config"), \
                  mock.patch.object(T.subprocess, "Popen") as child, \
                  mock.patch.object(sys, "argv", [str(SCRIPT)]), contextlib.redirect_stdout(io.StringIO()) as out:
                 if secret is not None:
@@ -201,6 +242,32 @@ finally:
             session.assert_not_called()
             self.assertNotIn("STAGING_SUDO_PASSWORD", os.environ)
             self.assertEqual(json.loads(out.getvalue()), {"transportStatus": "unverified", "failureStage": "source"})
+
+    def test_failure_logs_only_the_fixed_projection(self):
+        with mock.patch.dict(os.environ, {"STAGING_SUDO_PASSWORD": PASSWORD}), \
+             mock.patch.object(T, "provenance", side_effect=ValueError(PASSWORD + "PRIVATE_PROVIDER_TEXT")), \
+             mock.patch.object(sys, "argv", [str(SCRIPT)]), contextlib.redirect_stdout(io.StringIO()) as out, \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(T.main(), 1)
+        self.assertEqual(out.getvalue(), err.getvalue())
+        self.assertEqual(json.loads(err.getvalue()), {"transportStatus": "unverified", "failureStage": "source"})
+        self.assertNotIn(PASSWORD, out.getvalue() + err.getvalue())
+        self.assertNotIn("PRIVATE_PROVIDER_TEXT", out.getvalue() + err.getvalue())
+
+    def test_configuration_failure_precedes_secret_use_and_never_starts_ssh(self):
+        def refused_config():
+            self.assertEqual(os.environ["STAGING_SUDO_PASSWORD"], PASSWORD)
+            raise ValueError("PRIVATE_PROVIDER_TEXT")
+        with mock.patch.dict(os.environ, {"STAGING_SUDO_PASSWORD": PASSWORD}), \
+             mock.patch.object(T, "provenance", return_value=({}, VALIDATOR)), \
+             mock.patch.object(T, "configuration", side_effect=refused_config), \
+             mock.patch.object(T, "session") as session, \
+             mock.patch.object(sys, "argv", [str(SCRIPT)]), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(T.main(), 1)
+            session.assert_not_called()
+            self.assertNotIn("STAGING_SUDO_PASSWORD", os.environ)
+            self.assertEqual(json.loads(out.getvalue()), {"transportStatus": "unverified", "failureStage": "configuration"})
+
     def test_configuration_is_exact_and_rejects_overrides_or_wrong_target(self):
         directory = self.root / "jeeb-readiness-transport"
         directory.mkdir(mode=0o700)

@@ -11,9 +11,9 @@ fail() { printf '%s\n' 'Protected ingress source guard refused.' >&2; exit 1; }
 [[ "${REVIEWED_SHA:-}" =~ ^[0-9a-f]{40}$ && "${GITHUB_SHA:-}" = "$REVIEWED_SHA" ]] || fail
 [[ "${GITHUB_RUN_ID:-}" =~ ^[1-9][0-9]*$ ]] || fail
 [[ "$(git rev-parse HEAD)" = "$REVIEWED_SHA" && -z "$(git status --porcelain)" ]] || fail
-gh api --hostname github.com repos/olivium-dev/jeeb-infrastructure/branches/main 2>/dev/null |
+timeout 20s gh api --hostname github.com repos/olivium-dev/jeeb-infrastructure/branches/main 2>/dev/null |
   jq -e --arg sha "$REVIEWED_SHA" '.protected == true and .commit.sha == $sha' >/dev/null 2>&1 || fail
-gh api --hostname github.com "repos/olivium-dev/jeeb-infrastructure/actions/runs/$GITHUB_RUN_ID" 2>/dev/null |
+timeout 20s gh api --hostname github.com "repos/olivium-dev/jeeb-infrastructure/actions/runs/$GITHUB_RUN_ID" 2>/dev/null |
   jq -e --arg sha "$REVIEWED_SHA" --arg id "$GITHUB_RUN_ID" '
     (.id | tostring) == $id and .head_sha == $sha and .head_branch == "main" and
     .event == "workflow_dispatch" and .run_attempt == 1 and

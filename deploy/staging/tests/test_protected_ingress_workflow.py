@@ -70,8 +70,15 @@ class ProtectedWorkflowTests(unittest.TestCase):
         self.assertNotIn("secrets.", source)
         self.assertNotIn("test_protected_ingress_collector.py", WORKFLOW.read_text())
 
+    def test_source_requests_are_read_only_and_bounded(self):
+        source = GUARD.read_text()
+        self.assertEqual(source.count("timeout 20s gh api --hostname github.com"), 2)
+        self.assertNotIn("--method", source)
+        self.assertNotIn("STAGING_SUDO_PASSWORD", source)
+        self.assertNotIn("MSI_SSH_PASSWORD", source)
 
-@unittest.skipUnless(shutil.which("jq"), "source guard uses the jq supplied by hosted Ubuntu")
+
+@unittest.skipUnless(shutil.which("jq") and shutil.which("timeout"), "source guard uses jq/timeout supplied by hosted Ubuntu")
 class SourceGuardTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="protected-source-test-")

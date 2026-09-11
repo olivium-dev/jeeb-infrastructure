@@ -49,3 +49,5 @@ jobs:
             --outdir /tmp/jeeb-staging-worker-dry-run
           sh -n deploy/staging/letsencrypt/renewal-hooks/deploy/jeeb-nginx
           deploy/msi/jeeb-cms/tests/run.sh
+      - name: Verify root-owned protected ingress fixtures on disposable CI runner
+        run: sudo -n /usr/bin/python3 -B -m unittest discover -s deploy/staging/tests -p test_protected_ingress_collector.py -v

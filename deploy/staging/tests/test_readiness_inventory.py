@@ -280,13 +280,21 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(result, {"http_status": 200, "query_success": True, "sample_count": 2, "up_samples": 1})
         self.assertNotIn(CANARY, json.dumps(result))
 
-    def test_workflow_has_protected_owner_scope_and_no_input_or_remote_mutation(self):
+    def test_workflow_has_protected_owner_scope_and_only_reviewed_opt_in(self):
         source = (ROOT / ".github/workflows/jeeb-staging-readiness-inventory.yml").read_text()
         for expected in ("github.ref_protected", "github.actor == 'oudaykhaled'", "github.triggering_actor == 'oudaykhaled'",
                          "environment: staging", "StrictHostKeyChecking yes", "BatchMode yes",
                          "JEEB_STAGING_SSH_KNOWN_HOSTS", "python3 -", "permissions:\n  contents: read"):
             self.assertIn(expected, source)
-        for forbidden in ("inputs:", "sudo ", "workflow_call:", "secrets: inherit", "docker service update", "scp "):
+        self.assertIn("protected_ingress:\n", source)
+        self.assertIn("type: boolean\n        required: false\n        default: false", source)
+        self.assertIn("reviewed_sha:\n", source)
+        self.assertEqual(source.count("secrets.MSI_SSH_PASSWORD"), 1)
+        secret_step = source.split("      - name: Collect opt-in protected ingress evidence\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: ${{ inputs.protected_ingress }}", secret_step)
+        self.assertIn("STAGING_SUDO_PASSWORD: ${{ secrets.MSI_SSH_PASSWORD }}", secret_step)
+        self.assertNotIn("STAGING_SUDO_PASSWORD", source.split("      - name: Collect opt-in protected ingress evidence\n", 1)[0])
+        for forbidden in ("sudo ", "workflow_call:", "secrets: inherit", "docker service update", "scp "):
             self.assertNotIn(forbidden, source)
 
     def test_complete_inventory_uses_only_fixed_read_only_operations(self):

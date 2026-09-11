@@ -2,9 +2,21 @@ name: Jeeb staging read-only readiness inventory
 
 "on":
   workflow_dispatch:
+    inputs:
+      protected_ingress:
+        description: Collect the reviewed protected ingress diagnostic (never authorizes activation)
+        type: boolean
+        required: false
+        default: false
+      reviewed_sha:
+        description: Exact reviewed protected main commit, required only for protected ingress
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: jeeb-staging-readiness-inventory
@@ -16,10 +28,24 @@ jobs:
     runs-on: ubuntu-22.04
     environment: staging
     timeout-minutes: 8
+    env:
+      PROTECTED_INGRESS: ${{ inputs.protected_ingress }}
+      REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+      SOURCE_REF_PROTECTED: ${{ github.ref_protected }}
+      SOURCE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - name: Verify diagnostic contracts
-        run: python3 -m unittest discover -s deploy/staging/tests -p test_readiness_inventory.py -v
+        run: |
+          python3 -B -m unittest discover -s deploy/staging/tests -p test_readiness_inventory.py -v
+          python3 -B -m unittest discover -s deploy/staging/tests -p 'test_protected_ingress*.py' -v
+      - name: Verify protected ingress source before transport preparation
+        if: ${{ inputs.protected_ingress }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash deploy/staging/scripts/assert-protected-ingress-source.sh
       - name: Prepare pinned user-space transport
         env:
           SSH_HOST: ${{ secrets.JEEB_STAGING_SSH_HOST }}
@@ -31,6 +57,7 @@ jobs:
           [ "$GITHUB_REPOSITORY" = olivium-dev/jeeb-infrastructure ]
           [ "$SSH_HOST" = jeeb-staging-ssh.fds-1.com ]
           [[ "$SSH_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}$ ]]
+          if [ "$PROTECTED_INGRESS" = true ]; then [ "$SSH_USER" = ec2-user ]; fi
           [ -n "$SSH_KEY" ] && [ -n "$SSH_KNOWN_HOSTS" ]
           transport="$RUNNER_TEMP/jeeb-readiness-transport"
           install -d -m 700 "$transport"
@@ -62,12 +89,35 @@ jobs:
           } > "$transport/config"
           chmod 600 "$transport/config"
       - name: Collect fixed read-only staging evidence
+        if: ${{ !inputs.protected_ingress }}
         run: |
           set -euo pipefail
           printf 'source_commit=%s\n' "$GITHUB_SHA"
           ssh -F "$RUNNER_TEMP/jeeb-readiness-transport/config" \
             jeeb-staging-readiness python3 - \
             < deploy/staging/scripts/readiness-inventory.py
+      - name: Recheck protected current source immediately before authenticated diagnostic
+        if: ${{ inputs.protected_ingress }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash deploy/staging/scripts/assert-protected-ingress-source.sh
+      - name: Collect opt-in protected ingress evidence
+        id: protected-ingress
+        if: ${{ inputs.protected_ingress }}
+        env:
+          STAGING_SUDO_PASSWORD: ${{ secrets.MSI_SSH_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 -I -B deploy/staging/scripts/protected-ingress-transport.py \
+            > "$RUNNER_TEMP/protected-ingress-report.json"
+      - name: Retain validated protected ingress evidence
+        if: ${{ inputs.protected_ingress && steps.protected-ingress.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: protected-ingress-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/protected-ingress-report.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Remove exact runner credential files
         if: always()
         run: |

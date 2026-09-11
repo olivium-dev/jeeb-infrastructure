@@ -45,8 +45,52 @@ except BaseException:
 
 
 class TransportError(Exception):
-    def __init__(self, stage=None):
+    def __init__(self, stage=None, remote_failure="unknown"):
         self.stage = stage
+        self.remote_failure = remote_failure
+
+
+REMOTE_FAILURES = frozenset(("sudo-authentication-failed", "sudo-policy-denied",
+                           "tty-required", "remote-interpreter", "unknown"))
+
+
+def classify_remote_failure(raw, source):
+    """Project bounded stderr indications, never authentication/authority proof."""
+    if len(raw) > LIMIT:
+        return "unknown"
+    try:
+        text = raw.decode("utf-8").replace("\r\n", "\n")
+    except UnicodeError:
+        return "unknown"
+    if any(ord(char) < 32 and char not in "\n\t" for char in text):
+        return "unknown"
+    lines, found = text.split("\n"), set()
+    if any(re.fullmatch(r"sudo: (?:1 incorrect password attempt|(?:[2-9]|[1-9][0-9]{1,2}) incorrect password attempts)", line) for line in lines):
+        found.add("sudo-authentication-failed")
+    policy_lines = (
+        "ec2-user is not in the sudoers file.",
+        "ec2-user is not in the sudoers file.  This incident will be reported.",
+        "ec2-user is not allowed to run sudo on olivium-ephemerals.",
+        "Sorry, user ec2-user may not run sudo on olivium-ephemerals.",
+    )
+    if any(line in policy_lines or line.removeprefix("sudo: ") in policy_lines for line in lines):
+        found.add("sudo-policy-denied")
+    # sudo's command denial contains the complete multi-line source argument.
+    # Match only our actual reviewed invocation, not arbitrary command strings.
+    denial = ("Sorry, user ec2-user is not allowed to execute '/usr/bin/python3 -I -B -c "
+              + source + "' as root on olivium-ephemerals.")
+    if re.search(r"(?m)^(?:sudo: )?" + re.escape(denial) + r"$", text):
+        found.add("sudo-policy-denied")
+    if "sudo: sorry, you must have a tty to run sudo" in lines:
+        found.add("tty-required")
+    if any(re.fullmatch(r"sudo: unable to execute /usr/bin/python3: (?:No such file or directory|Permission denied|Exec format error)", line) for line in lines):
+        found.add("remote-interpreter")
+    frame = any(re.fullmatch(r'  File "<string>", line [1-9][0-9]{0,5}(?:, in [A-Za-z_<>][A-Za-z0-9_<>]*)?', line) for line in lines)
+    syntax = any(re.fullmatch(r"(?:SyntaxError|IndentationError|TabError):[^\n]*", line) for line in lines)
+    runtime = any(re.fullmatch(r"(?:ImportError|ModuleNotFoundError|NameError|TypeError|AttributeError|ValueError|RuntimeError|OSError):[^\n]*", line) for line in lines)
+    if frame and (syntax or ("Traceback (most recent call last):" in lines and runtime)):
+        found.add("remote-interpreter")
+    return next(iter(found)) if len(found) == 1 else "unknown"
 
 
 def strict_json(raw):
@@ -138,7 +182,7 @@ def session(config, source, password):
     except OSError:
         raise TransportError("transport") from None
     selector = selectors.DefaultSelector()
-    stdout, total, verified = bytearray(), 0, False
+    stdout, stderr, total, verified = bytearray(), bytearray(), 0, False
     end = time.monotonic() + TIMEOUT
     try:
         selector.register(proc.stdout, selectors.EVENT_READ)
@@ -154,6 +198,8 @@ def session(config, source, password):
                 total += len(chunk)
                 if total > LIMIT:
                     raise TransportError()
+                if key.fileobj is proc.stderr:
+                    stderr.extend(chunk)
                 if key.fileobj is proc.stdout:
                     stdout.extend(chunk)
                     if not verified:
@@ -184,11 +230,13 @@ def session(config, source, password):
         if not verified:
             raise TransportError("preflight")
         if code not in (0, 1):
-            raise TransportError("remote-command")
+            raise TransportError("remote-command", classify_remote_failure(stderr, source))
         try:
             return strict_json(stdout), code
         except (ValueError, TypeError, TransportError):
-            raise TransportError("output" if code == 0 else "remote-command") from None
+            if code == 0:
+                raise TransportError("output") from None
+            raise TransportError("remote-command", classify_remote_failure(stderr, source)) from None
     except TransportError as error:
         if error.stage:
             raise
@@ -237,7 +285,11 @@ def main():
     except BaseException as error:
         if isinstance(error, TransportError) and error.stage in ("preflight", "transport", "remote-command", "output"):
             stage = error.stage
-        failure = json.dumps({"transportStatus": "unverified", "failureStage": stage}, separators=(",", ":"))
+        projection = {"transportStatus": "unverified", "failureStage": stage}
+        if stage == "remote-command":
+            indication = error.remote_failure if isinstance(error, TransportError) else "unknown"
+            projection["remoteFailure"] = indication if isinstance(indication, str) and indication in REMOTE_FAILURES else "unknown"
+        failure = json.dumps(projection, separators=(",", ":"))
         print(failure)
         # The workflow redirects stdout to a report file. Preserve only this
         # fixed projection in failure logs, never remote stderr or exceptions.

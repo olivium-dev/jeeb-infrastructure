@@ -57,6 +57,16 @@ so its stage remains visible in the workflow log, and does not upload an
 unvalidated artifact. The existing exact runner SSH credential-file cleanup
 continues to run on failure.
 
+On `remote-command` failures only, `remoteFailure` provides one fixed indication:
+`sudo-authentication-failed`, `sudo-policy-denied`, `tty-required`,
+`remote-interpreter`, or `unknown`. The runner derives it privately from anchored
+known stderr signatures within the existing combined output limit. Unrecognized,
+localized or conflicting signatures remain `unknown`; no raw stderr, command
+arguments, exception details or credential values are emitted. These indications
+do not prove password correctness, sudo authorization or collector execution.
+Valid complete/partial reports and other failure stages retain their schemas.
+The invocation, authentication attempt count and privilege scope are unchanged.
+
 Local tests use fake subprocesses and no credentials or running services.
 Root-owned filesystem fixtures are skipped when not running as Linux root; the
 existing staging-edge contract workflow runs them on its disposable, credential-

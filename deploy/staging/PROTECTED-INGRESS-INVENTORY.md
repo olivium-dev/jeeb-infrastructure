@@ -18,9 +18,12 @@ command argument, output, artifact, or SSH child environment.
 The pinned Cloudflare/SSH transport uses `jeeb-staging-ssh.fds-1.com`, `ec2-user`,
 and the existing strict known-host binding. In the same SSH session, a fixed
 unprivileged preflight proves the exact host name, IPv4 address and user. Only
-after validating its bounded response does the runner send one newline-delimited
-password on SSH stdin, then close the stream. There are no interactive prompts,
-credential retries, fallback routes, installations or permission changes.
+after validating its bounded response may the runner send one newline-delimited
+password on SSH stdin, then close the stream. If a report has already started,
+the runner closes stdin without sending the password. Closed stdin never causes
+a credential retry; only the final validated report and exact exit/status pair
+can establish collection, not whether a password was accepted. There are no
+interactive prompts, fallback routes, installations or permission changes.
 
 The remote command runs only the reviewed, SHA-256-pinned collector source via
 fixed sudo and isolated Python arguments. That source argument is not a secret.
@@ -49,7 +52,8 @@ remain explicit gaps, never authorization.
 Raw SSH/collector stdout and stderr are captured privately with strict time/size
 limits. Only a fixed-schema validated report is retained as the protected ingress
 artifact; arbitrary fields, strings and exception text are rejected. Failed
-transport emits only a bounded fixed-stage failure result and does not upload an
+transport emits only a bounded fixed-stage failure result to stdout and stderr,
+so its stage remains visible in the workflow log, and does not upload an
 unvalidated artifact. The existing exact runner SSH credential-file cleanup
 continues to run on failure.
 

@@ -28,12 +28,13 @@ class TransportTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
 
-    def fake_ssh(self, mode="ok"):
+    def fake_ssh(self, mode="ok", diagnostic=None, exit_code=1):
         output = self.root / "observations.json"
         child = self.root / "fake-ssh"
         child.write_text(f'''#!{sys.executable}
 import json,os,select,sys,time
 mode={mode!r}; observations={{"early":False,"environment":False,"arguments":False,"once":False}}
+diagnostic={diagnostic!r}
 try:
  observations["environment"]=any(k in os.environ for k in ("STAGING_SUDO_PASSWORD","GH_TOKEN","UNRELATED_SECRET"))
  observations["arguments"]={PASSWORD!r} in repr(sys.argv)
@@ -69,6 +70,8 @@ try:
   else:
    data=sys.stdin.buffer.readline();tail=sys.stdin.buffer.read()
    observations["once"]=(data=={(PASSWORD + chr(10)).encode()!r} and tail==b"")
+   if diagnostic is not None:sys.stderr.buffer.write(diagnostic);sys.stderr.buffer.flush()
+   if mode=="classified":sys.exit({exit_code!r})
    if mode=="bad_json":print("PRIVATE_PROVIDER_TEXT",flush=True)
    elif mode=="unknown_report":print(json.dumps({{"safe":True,"raw":"PRIVATE_PROVIDER_TEXT"}}),flush=True)
    elif mode=="failure":sys.stderr.write("PRIVATE_PROVIDER_TEXT");sys.exit(1)
@@ -82,8 +85,8 @@ finally:
         child.chmod(0o700)
         return child, output
 
-    def invoke(self, mode):
-        child, observations = self.fake_ssh(mode)
+    def invoke(self, mode, diagnostic=None, exit_code=1):
+        child, observations = self.fake_ssh(mode, diagnostic, exit_code)
         out = io.StringIO()
         err = io.StringIO()
         spawn = subprocess.Popen
@@ -117,7 +120,83 @@ finally:
             self.assertFalse(observed["arguments"])
         else:
             observed = None
-        return result, json.loads(text), observed
+        report = json.loads(text)
+        if report.get("failureStage") == "remote-command":
+            self.assertIn(report["remoteFailure"], T.REMOTE_FAILURES)
+        else:
+            self.assertNotIn("remoteFailure", report)
+        return result, report, observed
+
+    def test_fixed_failure_signatures_and_exact_multiline_command(self):
+        denial = ("Sorry, user ec2-user is not allowed to execute '/usr/bin/python3 -I -B -c "
+                  + VALIDATOR + "' as root on olivium-ephemerals.\n").encode()
+        cases = (
+            (b"sudo: 1 incorrect password attempt\n", "sudo-authentication-failed"),
+            (b"sudo: 3 incorrect password attempts\r\n", "sudo-authentication-failed"),
+            (b"sudo: 1 incorrect password attempt\n" + PASSWORD.encode() + b" PRIVATE_PROVIDER_TEXT\n", "sudo-authentication-failed"),
+            (b"ec2-user is not in the sudoers file.\n", "sudo-policy-denied"),
+            (b"sudo: ec2-user is not allowed to run sudo on olivium-ephemerals.\n", "sudo-policy-denied"),
+            (denial, "sudo-policy-denied"),
+            (b"sudo: sorry, you must have a tty to run sudo\n", "tty-required"),
+            (b"sudo: unable to execute /usr/bin/python3: Permission denied\n", "remote-interpreter"),
+            (b'  File "<string>", line 123\n    PRIVATE_PROVIDER_TEXT\nSyntaxError: PRIVATE_PROVIDER_TEXT\n', "remote-interpreter"),
+            (b'Traceback (most recent call last):\n  File "<string>", line 9, in main\nValueError: PRIVATE_PROVIDER_TEXT\n', "remote-interpreter"),
+        )
+        for raw, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(T.classify_remote_failure(raw, VALIDATOR), expected)
+                code, report, observed = self.invoke("classified", raw)
+                self.assertEqual(code, 1)
+                self.assertEqual(report, {"transportStatus": "unverified", "failureStage": "remote-command", "remoteFailure": expected})
+                self.assertTrue(observed["once"])
+        self.assertEqual(T.classify_remote_failure(denial, VALIDATOR + "\n"), "unknown")
+        code, report, _ = self.invoke("classified", cases[0][0], exit_code=2)
+        self.assertEqual(code, 1)
+        self.assertEqual(report["remoteFailure"], "sudo-authentication-failed")
+
+    def test_unmatched_hostile_binary_and_ambiguous_failures_stay_unknown(self):
+        cases = (b"", b"Permission denied\n", b"sudo: no password was provided\n",
+                 b"PRIVATE_PROVIDER_TEXT sudo: 1 incorrect password attempt\n",
+                 b"sudo: 1 incorrect password attempt PRIVATE_PROVIDER_TEXT\n",
+                 b"sudo: 1 incorrect password attempt\x00\n",
+                 b"sudo: 1 incorrect password attempt\x1b[0m\n",
+                 b"sudo: 1 incorrect password attempt\n\xff",
+                 b"other-user is not in the sudoers file.\n",
+                 b"sudo: 1 incorrect password attempt\nsudo: sorry, you must have a tty to run sudo\n",
+                 b"SyntaxError: PRIVATE_PROVIDER_TEXT\n",
+                 b'  File "/other/script.py", line 1\nSyntaxError: PRIVATE_PROVIDER_TEXT\n')
+        for raw in cases:
+            with self.subTest(raw=repr(raw)[:40]):
+                self.assertEqual(T.classify_remote_failure(raw, VALIDATOR), "unknown")
+                code, report, _ = self.invoke("classified", raw)
+                self.assertEqual(code, 1)
+                self.assertEqual(report["remoteFailure"], "unknown")
+
+    def test_classification_does_not_change_partial_complete_or_combined_cap(self):
+        signature = b"sudo: 1 incorrect password attempt\n"
+        for mode in ("ok", "partial"):
+            code, report, observed = self.invoke(mode, signature)
+            self.assertEqual(code, 0)
+            self.assertNotIn("remoteFailure", report)
+            self.assertTrue(observed["once"])
+        oversized = b"x" * T.LIMIT + signature
+        self.assertEqual(T.classify_remote_failure(oversized, VALIDATOR), "unknown")
+        code, report, _ = self.invoke("classified", oversized)
+        self.assertEqual(code, 1)
+        self.assertEqual(report, {"transportStatus": "unverified", "failureStage": "transport"})
+
+    def test_arbitrary_failure_attribute_cannot_cross_projection_boundary(self):
+        for value in (PASSWORD, [PASSWORD], None):
+            with self.subTest(value_type=type(value).__name__), \
+                 mock.patch.object(T, "provenance", return_value=({}, VALIDATOR)), \
+                 mock.patch.object(T, "configuration", return_value=self.root / "config"), \
+                 mock.patch.object(T, "session", side_effect=T.TransportError("remote-command", value)), \
+                 mock.patch.dict(os.environ, {"STAGING_SUDO_PASSWORD": PASSWORD}), \
+                 mock.patch.object(sys, "argv", [str(SCRIPT)]), \
+                 contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(T.main(), 1)
+                self.assertEqual(json.loads(out.getvalue()), {"transportStatus": "unverified", "failureStage": "remote-command", "remoteFailure": "unknown"})
+                self.assertEqual(out.getvalue(), err.getvalue())
 
     def test_real_child_receives_password_only_after_valid_target_once_and_eof(self):
         code, report, observed = self.invoke("ok")

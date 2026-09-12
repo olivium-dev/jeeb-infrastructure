@@ -173,6 +173,85 @@ class EngineTests(unittest.TestCase):
         ]
         return manifest, service
 
+    def observe_unit_fixture(self, omitted=(), manager=None, bus_result="a(sb) 0", changes=None):
+        unit = "jeeb-chat.service"
+        data = {key: value for key, value in self.unit.items() if key in engine.PROPS and key not in omitted}
+        data.update(Id=unit, ExecStart="{ path=/usr/bin/dotnet ; argv[]=/usr/bin/dotnet ; start_time=now }")
+        data.update(changes or {})
+        raw = "\n".join(f"{key}={value}" for key, value in data.items())
+        with mock.patch.object(engine, "systemctl", return_value=raw), \
+                mock.patch.object(engine, "command", return_value=bus_result) as called, \
+                mock.patch.object(engine.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)), \
+                mock.patch.object(Path, "read_text", return_value="Uid:\t1000\t1000\t1000\t1000\n"), \
+                mock.patch.object(Path, "read_bytes", side_effect=lambda: b"HOME=/synthetic\0"), \
+                mock.patch.object(engine.os, "readlink", return_value="/synthetic/path"):
+            result = engine.inspect_unit(unit, manager)
+            return result, called.call_args_list
+
+    def test_missing_environment_files_requires_exact_typed_empty_system_property(self):
+        result, calls = self.observe_unit_fixture(omitted=("EnvironmentFiles",))
+        self.assertEqual("", result["EnvironmentFiles"])
+        self.assertEqual(set(engine.PROPS) | {"manager", "process"}, set(result))
+        self.assertEqual([mock.call([
+            "/usr/bin/busctl", "--system", "get-property", "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1/unit/jeeb_2dchat_2eservice",
+            "org.freedesktop.systemd1.Service", "EnvironmentFiles",
+        ])], calls)
+
+    def test_missing_environment_files_stays_on_selected_user_manager(self):
+        manager = {"scope": "user", "user": "ouday", "uid": 1000}
+        result, calls = self.observe_unit_fixture(omitted=("EnvironmentFiles",), manager=manager)
+        self.assertEqual(manager, result["manager"])
+        self.assertEqual([mock.call([
+            "/usr/sbin/runuser", "-u", "ouday", "--", "/usr/bin/env", "-i",
+            "PATH=/usr/bin:/bin", "XDG_RUNTIME_DIR=/run/user/1000",
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+            "/usr/bin/busctl", "--user", "get-property", "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1/unit/jeeb_2dchat_2eservice",
+            "org.freedesktop.systemd1.Service", "EnvironmentFiles",
+        ])], calls)
+
+    def test_present_environment_files_never_uses_bus_fallback(self):
+        for value in ("", "/synthetic/service.env (ignore_errors=no)"):
+            result, calls = self.observe_unit_fixture(changes={"EnvironmentFiles": value})
+            self.assertEqual(value, result["EnvironmentFiles"])
+            self.assertEqual([], calls)
+
+    def test_missing_environment_files_rejects_nonempty_malformed_or_unknown_type(self):
+        for value in ("", 'a(sb) 1 "/synthetic/service.env" false', "as 0", "a(sb) 00",
+                      "a(sb) 0 extra", "a(sb) 0\nunknown", "permission denied"):
+            with self.subTest(value=value), self.assertRaisesRegex(engine.GuardError, "unproven-empty-environmentfiles"):
+                self.observe_unit_fixture(omitted=("EnvironmentFiles",), bus_result=value)
+
+    def test_other_missing_unknown_or_wrong_identity_never_queries_bus(self):
+        for omitted, changes in ((("Environment",), {}), (("EnvironmentFiles", "User"), {}),
+                                 (("EnvironmentFiles",), {"Unknown": ""}),
+                                 (("EnvironmentFiles",), {"Id": "other.service"}),
+                                 (("EnvironmentFiles",), {"LoadState": "not-found"})):
+            with self.subTest(omitted=omitted, changes=changes), \
+                    mock.patch.object(engine, "confirm_empty_environment_files") as confirm, \
+                    self.assertRaises(engine.GuardError):
+                self.observe_unit_fixture(omitted=omitted, changes=changes)
+            confirm.assert_not_called()
+
+    def test_environment_files_bus_failure_or_wrong_user_never_falls_back(self):
+        for manager in ({"scope": "system"}, {"scope": "user", "user": "ouday", "uid": 1000}):
+            with mock.patch.object(engine, "command", side_effect=engine.GuardError("command-failed:busctl")) as called, \
+                    mock.patch.object(engine.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)), \
+                    self.assertRaisesRegex(engine.GuardError, "command-failed:busctl"):
+                engine.confirm_empty_environment_files("jeeb-chat.service", manager)
+            self.assertEqual(1, called.call_count)
+        with mock.patch.object(engine, "command") as called, \
+                mock.patch.object(engine.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=2000)), \
+                self.assertRaisesRegex(engine.GuardError, "user-manager-uid"):
+            engine.confirm_empty_environment_files("jeeb-chat.service", {"scope": "user", "user": "ouday", "uid": 1000})
+        called.assert_not_called()
+
+    def test_environment_files_bus_unit_label_uses_canonical_escaping(self):
+        with mock.patch.object(engine, "command", return_value="a(sb) 0") as called:
+            engine.confirm_empty_environment_files("1_a-b@c.service", {"scope": "system"})
+        self.assertEqual("/org/freedesktop/systemd1/unit/_31_5fa_2db_40c_2eservice", called.call_args.args[0][4])
+
     def test_chat_preserves_exact_native_cli_overrides_without_rewriting(self):
         manifest, service = self.chat_launch_inputs()
         before = copy.deepcopy(manifest)

@@ -192,12 +192,34 @@ def systemctl(manager, *args):
                    (["--user"] if manager.get("scope") == "user" else []) + list(args))
 
 
+def confirm_empty_environment_files(unit, manager):
+    # systemd bus_label_escape: encode every non-ASCII-alphanumeric byte and a
+    # leading digit. In particular '_' is escaped, preventing label collisions.
+    # https://github.com/systemd/systemd/blob/main/src/basic/bus-label.c
+    require(isinstance(unit, str) and unit and "\x00" not in unit, "unit-bus-path")
+    label = "".join(chr(byte) if (65 <= byte <= 90 or 97 <= byte <= 122 or
+                                (index > 0 and 48 <= byte <= 57)) else f"_{byte:02x}"
+                    for index, byte in enumerate(unit.encode("utf-8")))
+    raw = command(manager_prefix(manager) + [
+        "/usr/bin/busctl", "--user" if manager.get("scope") == "user" else "--system",
+        "get-property", "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1/unit/" + label,
+        "org.freedesktop.systemd1.Service", "EnvironmentFiles",
+    ])
+    require(raw == "a(sb) 0", "unproven-empty-environmentfiles")
+
+
 def inspect_unit(unit, manager=None):
     manager = manager or {"scope": "system"}
     raw = systemctl(manager, "show", unit, "--no-pager", "--property=" + ",".join(PROPS))
     data = dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
-    require(set(data) == set(PROPS), "unit-property-inventory")
+    missing = set(PROPS) - set(data)
+    require(not (set(data) - set(PROPS)) and missing in (set(), {"EnvironmentFiles"}),
+            "unit-property-inventory")
     require(data["LoadState"] == "loaded" and data["Id"] == unit, "unit-identity")
+    if missing:
+        confirm_empty_environment_files(unit, manager)
+        data["EnvironmentFiles"] = ""
     data["Environment"] = digest(data["Environment"].encode())
     data["ExecStart"] = digest(static_exec(data["ExecStart"]).encode())
     pid = int(data["MainPID"])

@@ -59,6 +59,13 @@ will invalidate older peer baselines. Do not reuse a saved baseline merely
 because the date looks recent: exact state is checked again before selection.
 The read-only capture does not prove that every active owner is running.
 
+Some systemd versions omit an empty `EnvironmentFiles` property from `show`.
+Only for that one omitted field, the observer queries the same unit's typed
+`EnvironmentFiles` D-Bus property through the same system or selected user
+manager. It records an empty string only after the exact `a(sb) 0` response.
+Missing other fields, failed queries, nonempty arrays and unknown output remain
+errors; no alternative manager or privilege is tried.
+
 ## Required candidate fields
 
 | Field | Required value / meaning |

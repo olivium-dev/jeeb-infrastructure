@@ -158,6 +158,68 @@ class EngineTests(unittest.TestCase):
         self.assertIs(result["host_operations"], False)
         self.assertEqual(engine.digest(engine.canonical(self.service["effects"])), result["effects_ack_sha256"])
 
+    def chat_launch_inputs(self):
+        service = dict(self.service, id="chat-service", repository="olivium-dev/chat-service",
+                       unit="jeeb-chat.service")
+        manifest = copy.deepcopy(self.manifest)
+        manifest["service"] = service["id"]
+        manifest["source"]["repository"] = service["repository"]
+        manifest["baseline"]["units"] = {service["unit"]: self.unit}
+        manifest["launch"]["argv"] = [
+            "/home/ouday/.dotnet/dotnet", "{release}/ChatService.API.dll",
+            "--urls=http://127.0.0.1:5803",
+            "--Firebase:Chat:IdentityEndpointEnabled=true",
+            "--Firestore:DatabaseId=(default)",
+        ]
+        return manifest, service
+
+    def test_chat_preserves_exact_native_cli_overrides_without_rewriting(self):
+        manifest, service = self.chat_launch_inputs()
+        before = copy.deepcopy(manifest)
+        engine.validate_manifest(manifest, service)
+        self.assertEqual(before, manifest)
+        launch = engine.expected_launch(manifest, Path("/synthetic/new-release"))
+        self.assertEqual("/synthetic/new-release/ChatService.API.dll", launch["argv"][1])
+        self.assertEqual(before["launch"]["argv"][2:], launch["argv"][2:])
+
+    def test_chat_rejects_any_native_launch_change(self):
+        manifest, service = self.chat_launch_inputs()
+        approved = manifest["launch"]["argv"]
+        candidates = [approved[:2], approved + [approved[2]], approved + ["--other=true"],
+                      approved[:2] + list(reversed(approved[2:])),
+                      ["/usr/bin/dotnet"] + approved[1:],
+                      [approved[0], "{release}/Other.dll"] + approved[2:],
+                      approved[:2] + ["--urls", "http://127.0.0.1:5803"] + approved[3:]]
+        for index, replacements in (
+            (2, ["--urls=http://0.0.0.0:5803", "--urls=http://127.0.0.1:5804",
+                 "--urls=http://localhost:5803", "--urls=http://127.0.0.1:5803;http://0.0.0.0:5803"]),
+            (3, ["--Firebase:Chat:IdentityEndpointEnabled=false", "--Firebase:Chat:IdentityEndpointEnabled=True",
+                 "--Firebase:Chat:IdentityEndpointEnabled=true ", "--secret=synthetic"]),
+            (4, ["--Firestore:DatabaseId=other", "--Firestore:DatabaseId=", "--Firestore:DatabaseId=(default)\n"]),
+        ):
+            for value in replacements:
+                changed = list(approved)
+                changed[index] = value
+                candidates.append(changed)
+        for argv in candidates:
+            with self.subTest(argv=argv):
+                manifest["launch"]["argv"] = argv
+                with self.assertRaises(engine.GuardError):
+                    engine.validate_manifest(manifest, service)
+
+    def test_chat_exception_cannot_be_reused_by_other_service_or_owner(self):
+        manifest, service = self.chat_launch_inputs()
+        self.manifest["launch"]["argv"] = manifest["launch"]["argv"]
+        with self.assertRaisesRegex(engine.GuardError, "inline-configuration-forbidden"):
+            engine.validate_manifest(self.manifest, self.service)
+        for field, value in (("repository", "olivium-dev/other"), ("unit", "jeeb-other.service")):
+            changed = dict(service, **{field: value})
+            candidate = copy.deepcopy(manifest)
+            candidate["source"]["repository"] = changed["repository"]
+            candidate["baseline"]["units"] = {changed["unit"]: self.unit}
+            with self.assertRaisesRegex(engine.GuardError, "chat-native-launch-contract"):
+                engine.validate_manifest(candidate, changed)
+
     def test_unknown_and_reverse_actions_are_rejected_before_host_calls(self):
         for action in ("unknown", "rollback", "restore", "retry", "deploy-all", "enable"):
             with self.subTest(action=action), contextlib.redirect_stderr(io.StringIO()):

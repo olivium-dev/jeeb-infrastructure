@@ -119,6 +119,17 @@ be separate non-secret arguments. The engine rejects `=` assignments, control
 characters and systemd `%` specifiers. Do not put shell `-c` command strings or
 provider credentials in the launch manifest.
 
+The one fixed exception preserves MSI chat's observed native launch verbatim:
+`/home/ouday/.dotnet/dotnet {release}/ChatService.API.dll` followed, in order, by
+`--urls=http://127.0.0.1:5803`,
+`--Firebase:Chat:IdentityEndpointEnabled=true`, and
+`--Firestore:DatabaseId=(default)`. Only `olivium-dev/chat-service` with
+`jeeb-chat.service` may use this exact tuple. Missing, duplicated, reordered or
+changed arguments are rejected. This preserves existing CLI configuration
+precedence, identity ON, the canonical database and loopback listener; it does
+not permit arbitrary inline configuration or relax runtime, environment,
+configuration, source, artifact or final-process checks.
+
 The helper runs as the existing non-root service identity. For each reviewed
 shell-source binding it checks the hash, freezes bytes in a sealed anonymous
 memory file, sources them using Bash, and closes the descriptor before the final

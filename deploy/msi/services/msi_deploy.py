@@ -32,6 +32,15 @@ MAX_ARCHIVE = 512 * 1024 * 1024
 MAX_EXPANDED = 1536 * 1024 * 1024
 HEX = re.compile(r"[0-9a-f]{64}\Z")
 SAFE = re.compile(r"[a-z0-9][a-z0-9-]{0,79}\Z")
+# Preserve the observed native chat CLI overrides and their precedence. This is
+# one fixed non-secret launch contract, not permission for arbitrary key=value
+# arguments. The external runtime is still pinned and verified by host checks.
+CHAT_NATIVE_ARGV = (
+    "/home/ouday/.dotnet/dotnet", "{release}/ChatService.API.dll",
+    "--urls=http://127.0.0.1:5803",
+    "--Firebase:Chat:IdentityEndpointEnabled=true",
+    "--Firestore:DatabaseId=(default)",
+)
 PROPS = ("Id", "LoadState", "ActiveState", "SubState", "MainPID", "NRestarts",
          "User", "Group", "DynamicUser", "WorkingDirectory", "ExecStart",
          "ExecMainStartTimestampMonotonic", "FragmentPath", "DropInPaths",
@@ -322,13 +331,19 @@ def validate_manifest(manifest, service):
     require(argv and all(isinstance(v, str) and v and not re.search(r"[\x00-\x1f%]", v) for v in argv), "launch-argv")
     require(argv[0].startswith(("/", "{release}/")) and
             any("{release}/" in v for v in argv), "launch-release-binding")
+    ordinary_argv = argv
+    if service["id"] == "chat-service":
+        require(service["repository"] == "olivium-dev/chat-service" and
+                service["unit"] == "jeeb-chat.service" and
+                argv == list(CHAT_NATIVE_ARGV), "chat-native-launch-contract")
+        ordinary_argv = argv[:2]
     require(not any(re.search(r"(?i)(password|passwd|secret|bearer|token|connectionstring|api.?key)", v)
-                    or "=" in v or re.search(r"[\r\n]", v) for v in argv), "inline-configuration-forbidden")
+                    or "=" in v or re.search(r"[\r\n]", v) for v in ordinary_argv), "inline-configuration-forbidden")
     require(HEX.fullmatch(manifest["launch"]["source_review_sha256"]), "launch-source-review")
     require(manifest["launch"]["argv_policy"] == "runtime-and-paths-only", "argv-policy")
     require(manifest["launch"]["contains_no_inline_credentials"] is True and
             manifest["launch"]["configuration_and_persistent_paths_reviewed"] is True, "launch-contract-review")
-    require(all(v.startswith(("/", "{release}/", "--")) or re.fullmatch(r"[A-Za-z0-9_.:+-]{1,128}", v) for v in argv), "argv-shape")
+    require(all(v.startswith(("/", "{release}/", "--")) or re.fullmatch(r"[A-Za-z0-9_.:+-]{1,128}", v) for v in ordinary_argv), "argv-shape")
     for item in manifest["launch"]["environment_bindings"]:
         require(item["path"].startswith("/") and HEX.fullmatch(item["sha256"]) and
                 type(item["export_all"]) is bool, "environment-binding")

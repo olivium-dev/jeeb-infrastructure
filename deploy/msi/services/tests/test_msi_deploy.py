@@ -71,6 +71,7 @@ class EngineTests(unittest.TestCase):
         self.unit = {key: "" for key in engine.PROPS}
         self.unit.update({"Id": self.service["unit"], "LoadState": "loaded",
                           "ActiveState": "active", "SubState": "running",
+                          "Type": "simple",
                           "MainPID": "12345", "NRestarts": "0", "User": "synthetic",
                           "Group": "synthetic", "DynamicUser": "no",
                           "FragmentPath": str(self.unit_file),
@@ -434,6 +435,54 @@ class EngineTests(unittest.TestCase):
             self.assertIn(mock.call("/proc/123/fd/1"), observed.call_args_list)
             with self.assertRaises(engine.GuardError):
                 engine.environment_projection(b"JOURNAL_STREAM=7:9\0", 123, "inv")
+
+    def test_forking_peer_environment_is_opaque_and_covers_every_byte(self):
+        data = b"process title without equals\0SYSTEMD_EXEC_PID=122\0INVOCATION_ID=parent\0JOURNAL_STREAM=7:9\0"
+        with mock.patch.object(engine.os, "stat", side_effect=AssertionError("opaque evidence must not parse descriptors")):
+            result = engine.environment_projection(data, 123, "inv", "forking")
+        self.assertEqual({"kind": "opaque-forking-environ", "sha256": engine.digest(data)}, result)
+        self.assertIsNone(engine.HEX.fullmatch(result["kind"]))
+        self.assertNotIn("process title", json.dumps(result))
+        for changed in (data + b"\0", data.replace(b"PID=122", b"PID=124"),
+                        data.replace(b"ID=parent", b"ID=other"), data.replace(b"7:9", b"7:8"),
+                        data.replace(b"title", b"TITLE")):
+            self.assertNotEqual(result, engine.environment_projection(changed, 123, "inv", "forking"))
+
+    def test_only_forking_peers_receive_opaque_environment_projection(self):
+        for unit_type in ("simple", "exec", "notify", "oneshot", "", "Forking"):
+            with self.subTest(unit_type=unit_type), self.assertRaisesRegex(engine.GuardError, "process-systemd-pid"):
+                engine.environment_projection(b"SYSTEMD_EXEC_PID=122\0", 123, "inv", unit_type)
+        with self.assertRaises(ValueError):
+            engine.environment_projection(b"not an environment entry\0", 123, "inv", "simple")
+
+    def test_inspect_unit_uses_observed_type_for_environment_projection(self):
+        with mock.patch.object(engine, "environment_projection", return_value={}) as projection:
+            result, _ = self.observe_unit_fixture(changes={"Type": "forking"})
+        self.assertEqual("forking", result["Type"])
+        self.assertEqual("forking", projection.call_args.args[3])
+        with self.assertRaisesRegex(engine.GuardError, "unit-property-inventory"):
+            self.observe_unit_fixture(omitted=("Type",))
+
+    def test_selected_forking_unit_is_not_deployable(self):
+        self.unit["Type"] = "forking"
+        with self.assertRaisesRegex(engine.GuardError, "unsupported-selected-forking-service"):
+            engine.validate_manifest(self.manifest, self.service)
+        self.host_mocks()
+        with self.assertRaisesRegex(engine.GuardError, "unsupported-selected-forking-service"):
+            engine.preflight(self.manifest, self.service, self.catalog)
+
+    def test_forking_peer_raw_environment_drift_rejects_preflight(self):
+        peer = copy.deepcopy(self.unit)
+        peer.update(Id="nginx.service", Type="forking")
+        peer["process"]["environment"] = engine.environment_projection(b"title\0", 123, "inv", "forking")
+        self.manifest["baseline"]["units"]["nginx.service"] = peer
+        changed = copy.deepcopy(peer)
+        changed["process"]["environment"] = engine.environment_projection(b"changed title\0", 123, "inv", "forking")
+        self.host_mocks()
+        with mock.patch.object(engine, "inventory_units", return_value=sorted(self.manifest["baseline"]["units"])), \
+                mock.patch.object(engine, "inspect_unit", side_effect=lambda unit, *_: changed if unit == "nginx.service" else copy.deepcopy(self.unit)), \
+                self.assertRaisesRegex(engine.GuardError, "unit-baseline-drift:nginx.service"):
+            engine.preflight(self.manifest, self.service, self.catalog)
 
     def test_operation_lock_is_exclusive_and_closes_even_on_failure(self):
         info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0)

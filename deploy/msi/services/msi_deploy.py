@@ -41,7 +41,7 @@ CHAT_NATIVE_ARGV = (
     "--Firebase:Chat:IdentityEndpointEnabled=true",
     "--Firestore:DatabaseId=(default)",
 )
-PROPS = ("Id", "LoadState", "ActiveState", "SubState", "MainPID", "NRestarts",
+PROPS = ("Id", "LoadState", "ActiveState", "SubState", "Type", "MainPID", "NRestarts",
          "User", "Group", "DynamicUser", "WorkingDirectory", "ExecStart",
          "ExecMainStartTimestampMonotonic", "FragmentPath", "DropInPaths",
          "EnvironmentFiles", "Environment", "Restart", "ProtectSystem",
@@ -150,7 +150,12 @@ def static_exec(value):
     return value.split("; start_time=", 1)[0].rstrip()
 
 
-def environment_projection(data, pid, invocation):
+def environment_projection(data, pid, invocation, unit_type="simple"):
+    if unit_type == "forking":
+        # Non-deployable peers may inherit an exited parent's dynamic variables
+        # or rewrite their process title over environ. Preserve every byte in a
+        # disjoint opaque projection: no parsing, omission or normalization.
+        return {"kind": "opaque-forking-environ", "sha256": digest(data)}
     result = {}
     seen = set()
     for entry in data.split(b"\0"):
@@ -231,7 +236,7 @@ def inspect_unit(unit, manager=None):
     data["process"] = {"uid": int(uid[1]), "exe": os.readlink(proc / "exe"),
                        "cwd": os.readlink(proc / "cwd"),
                        "argv_sha256": digest((proc / "cmdline").read_bytes()),
-                       "environment": environment_projection((proc / "environ").read_bytes(), pid, data["InvocationID"])}
+                       "environment": environment_projection((proc / "environ").read_bytes(), pid, data["InvocationID"], data["Type"])}
     data["manager"] = manager
     return data
 
@@ -328,6 +333,8 @@ def validate_manifest(manifest, service):
     require(service.get("default_branch") in (None, source["default_branch"]), "default-branch-mismatch")
     require(HEX.fullmatch(manifest["catalog_sha256"]) and HEX.fullmatch(manifest["launcher_sha256"]), "input-provenance")
     require(manifest["baseline"]["units"] and service["unit"] in manifest["baseline"]["units"], "missing-unit-baseline")
+    require(manifest["baseline"]["units"][service["unit"]]["Type"] != "forking",
+            "unsupported-selected-forking-service")
     files = manifest["artifact"]["files"]
     require(0 < len(files) <= 10000, "artifact-file-count")
     seen = set()
@@ -455,6 +462,7 @@ def preflight(manifest, service, catalog):
     for name, expected in baseline["units"].items():
         require(inspect_unit(name, expected["manager"]) == expected, "unit-baseline-drift:" + name)
     selected = baseline["units"][service["unit"]]
+    require(selected["Type"] != "forking", "unsupported-selected-forking-service")
     user_manager = service.get("manager", {"scope": "system"})
     require(selected["manager"] == user_manager and selected["process"]["uid"] > 0, "service-manager-identity")
     require((selected["User"] not in ("", "root", "0") or user_manager["scope"] == "user") and selected["DynamicUser"] == "no" and

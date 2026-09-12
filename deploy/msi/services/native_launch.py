@@ -55,7 +55,7 @@ def main():
         descriptors.append((fd, "1" if binding["export_all"] else "0"))
     script = 'set -e; count="$1"; shift; '
     script += 'for ((i=0;i<count;i++)); do if [[ "$1" == 1 ]]; then set -a; else set +a; fi; shift; '
-    script += 'source "$1"; fd=${1##*/}; exec {fd}<&-; shift; done; set +a; exec "$@"'
+    script += 'source "$1"; set +a; fd=${1##*/}; exec {fd}<&-; shift; done; set +a; exec "$@"'
     os.execv("/usr/bin/bash", ["/usr/bin/bash", "--noprofile", "--norc", "-c",
              script, "msi-reviewed-env", str(len(descriptors)),
              *[part for fd, export in descriptors for part in (export, f"/proc/self/fd/{fd}")], *argv])

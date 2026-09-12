@@ -205,6 +205,15 @@ intentional differences such as the new working-directory value from source
 review and inert Linux execution; do not accept an arbitrary post-deployment
 environment by replacing the expectation with whatever happened.
 
+The observed unit `Type` is also required and retained. Non-deployment
+`Type=forking` peers, such as PostgreSQL and nginx, use the disjoint environment
+projection `{"kind":"opaque-forking-environ","sha256":"..."}` instead: the hash
+covers every raw `/proc/<pid>/environ` byte, including inherited parent variables,
+ordering, separators and process-title rewrites. Nothing is parsed or omitted;
+any byte change invalidates exact peer equality. A selected `Type=forking` unit
+is explicitly unsupported for deployment. Selected native units retain the
+strict per-variable and current-process dynamic-identity checks above.
+
 Direct native executables and ordinary `dotnet <new.dll>` launches are checked
 against the expanded `launch.argv` and resolved executable. An Elixir release
 launcher can exec BEAM with different arguments; some Python wrappers also

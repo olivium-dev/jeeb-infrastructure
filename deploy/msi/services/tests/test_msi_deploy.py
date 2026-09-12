@@ -813,6 +813,13 @@ class EngineTests(unittest.TestCase):
                 script = argv[4]
                 self.assertLess(script.index('exec {fd}<&-'), script.index('exec "$@"'))
                 self.assertIn('if [[ "$1" == 1 ]]; then set -a; else set +a; fi', script)
+                # The source retains requested export semantics; helper fd and
+                # loop-index assignments must happen only after allexport ends.
+                self.assertIn('source "$1"; set +a; fd=${1##*/}; exec {fd}<&-; shift; done;', script)
+                self.assertTrue(script.startswith('set -e; count="$1"; shift; '))
+                self.assertNotIn('export fd', script)
+                self.assertNotIn('export i', script)
+                self.assertNotIn('export count', script)
                 self.assertEqual(2, sealed.call_count)
                 for fd in descriptors:
                     os.lseek(fd, 0, os.SEEK_SET)

@@ -57,7 +57,7 @@ else:
         except FileNotFoundError:
             pass  # os.listdir's own directory fd has already closed.
     keys = ("MSI_PLAIN_ONE", "MSI_EXPLICIT_ONE", "MSI_PLAIN_TWO",
-            "MSI_EXPLICIT_TWO", "MSI_SEAL_PROOF", "MSI_INHERITED")
+            "MSI_EXPLICIT_TWO", "MSI_SEAL_PROOF", "MSI_INHERITED", "fd", "i", "count")
     print(json.dumps({"uid": os.geteuid(), "environment":
                       {key: os.environ.get(key) for key in keys},
                       "descriptors": descriptors}))
@@ -108,6 +108,8 @@ class NativeLaunchLinuxTests(unittest.TestCase):
         self.assertEqual(os.geteuid(), result["uid"])
         self.assertEqual("synthetic-inherited", result["environment"]["MSI_INHERITED"])
         self.assertEqual("sealed-write-rejected", result["environment"]["MSI_SEAL_PROOF"])
+        for internal in ("fd", "i", "count"):
+            self.assertIsNone(result["environment"][internal], "launcher internal leaked: " + internal)
         self.assertFalse(any("memfd:msi-env" in target for target in result["descriptors"].values()))
         self.assertEqual({"0", "1", "2"}, set(result["descriptors"]))
         return result["environment"]
@@ -129,6 +131,13 @@ class NativeLaunchLinuxTests(unittest.TestCase):
         self.assertEqual("synthetic-explicit-ONE", environment["MSI_EXPLICIT_ONE"])
         self.assertIsNone(environment["MSI_PLAIN_TWO"])
         self.assertEqual("synthetic-explicit-TWO", environment["MSI_EXPLICIT_TWO"])
+
+    def test_multiple_export_all_sources_preserve_exports_without_internal_variables(self):
+        environment = self.successful_result([self.binding("ONE", True, attest=True),
+                                              self.binding("TWO", True)])
+        for suffix in ("ONE", "TWO"):
+            self.assertEqual("synthetic-plain-" + suffix, environment["MSI_PLAIN_" + suffix])
+            self.assertEqual("synthetic-explicit-" + suffix, environment["MSI_EXPLICIT_" + suffix])
 
     def test_changed_binding_fails_before_source_or_exec_with_sanitized_output(self):
         binding = self.binding("ONE", True, attest=True)

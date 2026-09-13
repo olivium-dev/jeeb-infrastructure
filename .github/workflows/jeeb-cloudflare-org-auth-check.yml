@@ -1,0 +1,58 @@
+name: Verify staging Cloudflare organization credential
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_commit_sha:
+        description: Exact protected main commit to authenticate from
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jeeb-cloudflare-org-auth-staging
+  cancel-in-progress: false
+
+jobs:
+  policy:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'olivium-dev/jeeb-infrastructure' &&
+      github.actor == 'oudaykhaled' &&
+      github.ref == 'refs/heads/main' &&
+      github.ref_protected == true
+    runs-on: ubuntu-22.04
+    timeout-minutes: 2
+    steps:
+      - name: Verify the exact requested main revision
+        env:
+          EXPECTED_COMMIT_SHA: ${{ inputs.expected_commit_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [ "$GITHUB_SHA" = "$EXPECTED_COMMIT_SHA" ]
+
+  authenticate:
+    needs: policy
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    environment: staging
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify offline failure and transport boundaries
+        run: python3 -m unittest discover -s deploy/staging/tests -p test_cloudflare_org_auth.py -v
+      - name: Authenticate the exact staging token and Worker domains
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.JEEB_STAGING_JEEB_INFRASTRUCTURE_CLOUDFLARE_API_TOKEN }}
+          EXPECTED_CLOUDFLARE_TOKEN_ID_SHA256: ${{ vars.JEEB_STAGING_JEEB_INFRASTRUCTURE_CLOUDFLARE_TOKEN_ID_SHA256 }}
+        run: |
+          set -euo pipefail
+          set +x
+          printf '%s' "$CLOUDFLARE_API_TOKEN" |
+            env -u CLOUDFLARE_API_TOKEN python3 scripts/verify_cloudflare_org_auth.py

@@ -1,6 +1,5 @@
 import base64
 import contextlib
-import importlib.util
 import io
 import os
 from pathlib import Path
@@ -9,7 +8,7 @@ import unittest
 from unittest import mock
 from nacl.public import PrivateKey, SealedBox
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import seal_existing_cloudflare_secret as subject
 

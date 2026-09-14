@@ -1,0 +1,101 @@
+name: Jeeb staging edge read-only smoke
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jeeb-staging-edge-readonly
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: ${{ github.ref_name == github.event.repository.default_branch }}
+    runs-on: ubuntu-24.04
+    environment: staging
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_ACCOUNT_ID: '58198ae51392a2cc2d391867fb65da7e'
+      WORKER_NAME: jeeb-staging-host-router
+
+    steps:
+      - name: Check out the exact default-branch revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install the pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.18.0'
+
+      - name: Authenticate the migrated token and exact edge resources
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.JEEB_STAGING_JEEB_INFRASTRUCTURE_CLOUDFLARE_API_TOKEN }}
+          EXPECTED_CLOUDFLARE_TOKEN_ID_SHA256: ${{ vars.JEEB_STAGING_JEEB_INFRASTRUCTURE_CLOUDFLARE_TOKEN_ID_SHA256 }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REPOSITORY" = olivium-dev/jeeb-infrastructure ]
+          [ "$GITHUB_REF" = refs/heads/main ]
+          [ "$GITHUB_SHA" = "$(git rev-parse HEAD)" ]
+          set +x
+          printf '%s' "$CLOUDFLARE_API_TOKEN" |
+            env -u CLOUDFLARE_API_TOKEN python3 scripts/verify_cloudflare_org_auth.py
+
+      - name: Verify current public HTTP and authenticated Phoenix WSS
+        env:
+          JEEB_STAGING_WSS_PROBE_MINT_KEY: ${{ secrets.JEEB_STAGING_WSS_PROBE_MINT_KEY }}
+        run: |
+          set -euo pipefail
+          response_headers=$RUNNER_TEMP/edge-response-headers
+          response_body=$RUNNER_TEMP/edge-response-body
+
+          probe_http_200() {
+            local label=$1 url=$2
+            curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 5 --max-time 15 \
+              -D "$response_headers" -o "$response_body" "$url"
+            grep -Eq '^HTTP/[0-9.]+ 200 ' "$response_headers"
+            grep -Eiq '^server: cloudflare[[:space:]]*$' "$response_headers"
+            grep -Eiq '^cf-ray: [^[:space:]]+[[:space:]]*$' "$response_headers"
+            printf '%s status=200 edge=cloudflare\n' "$label"
+          }
+
+          probe_http_200 tunnel \
+            https://app.jeeb.fds-1.com/__tunnel_health
+          probe_http_200 gateway-readiness \
+            https://app.jeeb.fds-1.com/health/ready
+          probe_http_200 cms-health \
+            https://cms.jeeb.fds-1.com/healthz
+          grep -Eq '^healthy[[:space:]]*$' "$response_body"
+
+          node deploy/staging/scripts/verify-authorized-wss.mjs
+
+          websocket_key=$(printf '%s' 'jeeb-edge-probe!' | base64 -w 0)
+          curl --silent --show-error --http1.1 --proto '=https' --tlsv1.2 \
+            --connect-timeout 5 --max-time 10 \
+            -D "$response_headers" -o "$response_body" \
+            -H 'Connection: Upgrade' \
+            -H 'Upgrade: websocket' \
+            -H 'Sec-WebSocket-Version: 13' \
+            -H "Sec-WebSocket-Key: $websocket_key" \
+            'https://app.jeeb.fds-1.com/socket/websocket?vsn=2.0.0'
+          wss_status=$(awk '/^HTTP\// { code=$2 } END { print code }' \
+            "$response_headers")
+          case "$wss_status" in 401|403) ;; *) exit 41 ;; esac
+          grep -Eiq '^x-jeeb-realtime-proxy: gateway[[:space:]]*$' \
+            "$response_headers"
+          printf 'unauthenticated_wss status=%s route=gateway-to-phoenix\n' \
+            "$wss_status"
+
+      - name: Publish credential and transport boundary
+        if: ${{ always() }}
+        run: |
+          {
+            printf '%s\n' '## Jeeb staging edge read-only smoke'
+            printf '%s\n' ''
+            printf '%s\n' '- Cloudflare API token: provider identity and Worker/domain metadata only'
+            printf '%s\n' '- WSS probe key: short-lived application credentials only'
+            printf '%s\n' '- Cloudflare Access SSH: not used by this workflow'
+            printf '%s\n' '- Worker, DNS, domains, routes, origins, and runtime: unchanged'
+          } >> "$GITHUB_STEP_SUMMARY"

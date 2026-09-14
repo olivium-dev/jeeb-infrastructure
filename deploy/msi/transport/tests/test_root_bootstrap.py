@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 INSTALLER_PATH = ROOT / "install-reviewed-runtime-activation.py"
 PACKAGER_PATH = ROOT / "package-reviewed-runtime-activation.py"
 MANIFEST_PATH = ROOT / "reviewed-runtime-activation-manifest.json"
+PACKAGE_PATH = ROOT / "jeeb-msi-runtime-activation-bootstrap.tar"
+STAGE_WORKFLOW = ROOT.parents[2] / ".github/workflows/stage-reviewed-msi-runtime-bootstrap.yml"
 
 
 def load(name: str, path: Path):
@@ -129,6 +131,32 @@ class RootBootstrapTests(unittest.TestCase):
             archive = first.read_bytes()
             for forbidden in (b"MSI_SSH_PASSWORD=", b"FIREBASE_JSON=", b"SMTP_PASSWORD="):
                 self.assertNotIn(forbidden, archive)
+
+    def test_checked_in_package_and_unprivileged_stage_workflow_are_exact(self):
+        self.assertEqual(
+            hashlib.sha256(PACKAGE_PATH.read_bytes()).hexdigest(),
+            "07dfdb54cdbb6ad4635e7190848f43f7316516d2e71de9ba6ce23f5963fa8357",
+        )
+        workflow = STAGE_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("REF_PROTECTED: ${{ github.ref_protected }}", workflow)
+        self.assertIn("[ \"$GITHUB_SHA\" = \"$EXPECTED_SHA\" ]", workflow)
+        self.assertIn("MSI_SSH_USER: msi-access", workflow)
+        self.assertIn("StrictHostKeyChecking yes", workflow)
+        self.assertIn("PubkeyAuthentication no", workflow)
+        self.assertIn("1002:1002:600", workflow)
+        self.assertIn("/usr/bin/ln '$incoming' '$REMOTE_PACKAGE'", workflow)
+        self.assertGreaterEqual(
+            workflow.count("test ! -L /home/msi-access/.jeeb-deploy"), 3
+        )
+        self.assertGreaterEqual(
+            workflow.count("test -d /home/msi-access/.jeeb-deploy"), 3
+        )
+        self.assertIn(
+            '"set -euo pipefail; test -d /home/msi-access/.jeeb-deploy; test ! -L /home/msi-access/.jeeb-deploy; if test',
+            workflow,
+        )
+        self.assertNotIn("sudo ", workflow)
+        self.assertNotIn("/usr/bin/sudo", workflow)
 
 
 if __name__ == "__main__":

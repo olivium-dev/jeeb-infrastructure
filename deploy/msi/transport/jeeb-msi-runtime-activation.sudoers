@@ -1,0 +1,12 @@
+# MSI development credential activation only. Helpers are installed root-owned,
+# validate their own fixed host/unit/credential contracts, and accept secrets on
+# stdin. Keep argument lists exact: no wildcard, shell, interpreter or systemctl.
+msi-access ALL=(root) NOPASSWD: /usr/local/sbin/jeeb-msi-chat-firebase-admin stage
+msi-access ALL=(root) NOPASSWD: /usr/local/sbin/jeeb-msi-chat-firebase-admin activate
+msi-access ALL=(root) NOPASSWD: /usr/local/sbin/jeeb-msi-push-firebase-admin --preflight
+msi-access ALL=(root) NOPASSWD: /usr/local/sbin/jeeb-msi-push-firebase-admin --activate
+msi-access ALL=(root) NOPASSWD: /usr/local/sbin/jeeb-msi-user-management-firebase-admin --mode preflight
+msi-access ALL=(root) NOPASSWD: /usr/local/sbin/jeeb-msi-user-management-firebase-admin --mode activate
+msi-access ALL=(root) NOPASSWD: /usr/local/sbin/jeeb-msi-user-management-smtp-admin preflight
+msi-access ALL=(root) NOPASSWD: /usr/local/sbin/jeeb-msi-user-management-smtp-admin stage
+msi-access ALL=(root) NOPASSWD: /usr/local/sbin/jeeb-msi-user-management-smtp-admin activate

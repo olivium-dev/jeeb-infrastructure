@@ -21,3 +21,5 @@ jobs:
         run: python3 -m unittest discover -s deploy/msi/services/tests -p 'test_*.py' -v
       - name: Verify MSI runtime activation transport boundary
         run: python3 -m unittest discover -s deploy/msi/transport/tests -p 'test_*.py' -v
+      - name: Verify owner-controlled MSI readback safety offline
+        run: python3 -I -B -m unittest discover -s deploy/msi/transport/readback/tests -p 'test_*.py' -v

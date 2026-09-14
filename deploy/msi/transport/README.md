@@ -9,23 +9,23 @@ The one-time installation is an MSI administrator action. Build the
 credential-free archive from the fixed revisions in
 `reviewed-runtime-activation-manifest.json`, compare its SHA-256 with the
 reviewed build result, transfer it into root custody, and extract it beneath
-`/root`. The reviewed v2 archive is staged at
-`/home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-v2-1d9aa98e.tar`
+`/root`. The reviewed v3 archive is staged at
+`/home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-v3-f06719d1.tar`
 with SHA-256
-`1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf`.
+`f06719d1412ed8d5ac604abde6e402dd969284180c1af447fd75b30d1633d0bc`.
 An authenticated MSI administrator runs this exact root-side command:
 
 ```bash
 set -euo pipefail
-source=/home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-v2-1d9aa98e.tar
-custody=/root/jeeb-msi-runtime-activation-bootstrap-v2-1d9aa98e.tar
-package=/root/jeeb-msi-runtime-activation-bootstrap-v2
+source=/home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-v3-f06719d1.tar
+custody=/root/jeeb-msi-runtime-activation-bootstrap-v3-f06719d1.tar
+package=/root/jeeb-msi-runtime-activation-bootstrap-v3
 test -d /home/msi-access/.jeeb-deploy
 test ! -L /home/msi-access/.jeeb-deploy
 test ! -L "$source"
 test "$(/usr/bin/stat -c '%u:%g:%a:%h' "$source")" = 1002:1002:600:1
 /usr/bin/install -o root -g root -m 0400 "$source" "$custody"
-printf '%s  %s\n' 1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf "$custody" | /usr/bin/sha256sum --check --strict
+printf '%s  %s\n' f06719d1412ed8d5ac604abde6e402dd969284180c1af447fd75b30d1633d0bc "$custody" | /usr/bin/sha256sum --check --strict
 if test -e "$package" || test -L "$package"; then
   test -d "$package"
   test ! -L "$package"
@@ -33,16 +33,18 @@ if test -e "$package" || test -L "$package"; then
 fi
 /usr/bin/tar --extract --file "$custody" --directory /root --no-same-owner
 test "$(/usr/bin/stat -c '%u:%g:%a:%h' "$package/install-reviewed-runtime-activation.py")" = 0:0:500:1
-printf '%s  %s\n' dd131899526f496ba24e1b70c7644e3f3674981ac4316f6787d6e2120094ef49 "$package/install-reviewed-runtime-activation.py" | /usr/bin/sha256sum --check --strict
+printf '%s  %s\n' dfe1877e5db872e1c793170f996cbc2ff19766340a78f1bd93f6e1b08dafe9de "$package/install-reviewed-runtime-activation.py" | /usr/bin/sha256sum --check --strict
 /usr/bin/python3 -I "$package/install-reviewed-runtime-activation.py"
 ```
 
 The installer requires root, the exact MSI hostname and `msi-access` uid/gid,
 root-owned mode-0700 package directories, and exact source SHA-256 values. It
 validates both sudoers copies with `visudo`, refuses to replace any nonmatching
-target, installs the sudoers policy last, and restarts no service. Version 2 can
-replace only the exact reviewed version-1 policy and the two exact predecessor
-user-management helpers. An exact rerun reports every target as already exact.
+target, installs the sudoers policy last, and restarts no service. Version 3
+can replace only exact reviewed predecessor bytes for the push and
+user-management Firebase helpers, the legacy user-management SMTP helper,
+and the version-1 sudo policy. An exact rerun reports every target as already
+exact.
 If installation fails, it removes exact files created in that run and restores
 recognized predecessor bytes in reverse order; recovery is to correct the
 external package or host condition and run the same command again.

@@ -12,7 +12,7 @@ import subprocess
 import tarfile
 
 
-ROOT_NAME = "jeeb-msi-runtime-activation-bootstrap"
+ROOT_NAME = "jeeb-msi-runtime-activation-bootstrap-v2"
 HERE = Path(__file__).resolve().parent
 MANIFEST = HERE / "reviewed-runtime-activation-manifest.json"
 INSTALLER = HERE / "install-reviewed-runtime-activation.py"
@@ -60,7 +60,7 @@ def build(output: Path) -> dict[str, object]:
     if manifest.get("schemaVersion") != 1:
         raise ValueError("manifest-schema")
     files = manifest.get("files")
-    if not isinstance(files, list) or len(files) != 5:
+    if not isinstance(files, list) or len(files) != 7:
         raise ValueError("manifest-files")
 
     payload: list[tuple[str, bytes]] = []

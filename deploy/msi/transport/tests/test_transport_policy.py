@@ -15,7 +15,7 @@ class MsiRuntimeTransportPolicyTests(unittest.TestCase):
             for line in SUDOERS.read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         ]
-        self.assertEqual(9, len(lines))
+        self.assertEqual(14, len(lines))
         allowed_helpers = {
             "/usr/local/sbin/jeeb-msi-chat-firebase-admin": {
                 "stage", "activate"
@@ -27,6 +27,12 @@ class MsiRuntimeTransportPolicyTests(unittest.TestCase):
                 "--mode preflight", "--mode activate"
             },
             "/usr/local/sbin/jeeb-msi-user-management-smtp-admin": {
+                "preflight", "stage", "activate"
+            },
+            "/usr/local/sbin/jeeb-msi-otp-twilio-admin": {
+                "stage", "activate"
+            },
+            "/usr/local/sbin/jeeb-msi-gateway-firebase-diagnostics-admin": {
                 "preflight", "stage", "activate"
             },
         }

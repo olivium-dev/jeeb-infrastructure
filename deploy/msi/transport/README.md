@@ -1,27 +1,51 @@
 # MSI development runtime activation transport
 
 This directory defines the least-privileged bridge from the existing public
-`msi-access` Cloudflare SSH account to four reviewed development credential
+`msi-access` Cloudflare SSH account to six reviewed development runtime and credential
 activators. It does not grant a shell, an interpreter, direct `systemctl`, file
 copy, Docker, sudoers editing, staging access, or production access.
 
 The one-time installation is an MSI administrator action. Build the
 credential-free archive from the fixed revisions in
-`reviewed-runtime-activation-manifest.json`, place it at
-`/root/jeeb-msi-runtime-activation-bootstrap.tar`, and compare its SHA-256 with
-the reviewed build result. Extract it as root beneath `/root`, then run exactly:
+`reviewed-runtime-activation-manifest.json`, compare its SHA-256 with the
+reviewed build result, transfer it into root custody, and extract it beneath
+`/root`. The reviewed v2 archive is staged at
+`/home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-v2-1d9aa98e.tar`
+with SHA-256
+`1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf`.
+An authenticated MSI administrator runs this exact root-side command:
 
 ```bash
-/usr/bin/python3 -I /root/jeeb-msi-runtime-activation-bootstrap/install-reviewed-runtime-activation.py
+set -euo pipefail
+source=/home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-v2-1d9aa98e.tar
+custody=/root/jeeb-msi-runtime-activation-bootstrap-v2-1d9aa98e.tar
+package=/root/jeeb-msi-runtime-activation-bootstrap-v2
+test -d /home/msi-access/.jeeb-deploy
+test ! -L /home/msi-access/.jeeb-deploy
+test ! -L "$source"
+test "$(/usr/bin/stat -c '%u:%g:%a:%h' "$source")" = 1002:1002:600:1
+/usr/bin/install -o root -g root -m 0400 "$source" "$custody"
+printf '%s  %s\n' 1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf "$custody" | /usr/bin/sha256sum --check --strict
+if test -e "$package" || test -L "$package"; then
+  test -d "$package"
+  test ! -L "$package"
+  test "$(/usr/bin/stat -c '%u:%g:%a' "$package")" = 0:0:700
+fi
+/usr/bin/tar --extract --file "$custody" --directory /root --no-same-owner
+test "$(/usr/bin/stat -c '%u:%g:%a:%h' "$package/install-reviewed-runtime-activation.py")" = 0:0:500:1
+printf '%s  %s\n' dd131899526f496ba24e1b70c7644e3f3674981ac4316f6787d6e2120094ef49 "$package/install-reviewed-runtime-activation.py" | /usr/bin/sha256sum --check --strict
+/usr/bin/python3 -I "$package/install-reviewed-runtime-activation.py"
 ```
 
 The installer requires root, the exact MSI hostname and `msi-access` uid/gid,
 root-owned mode-0700 package directories, and exact source SHA-256 values. It
 validates both sudoers copies with `visudo`, refuses to replace any nonmatching
-target, installs the sudoers policy last, and restarts no service. An exact
-rerun reports every target as already exact. If installation fails, it removes
-only exact files created in that run and reports a safe failure; recovery is to
-correct the external package/host condition and run the same command again.
+target, installs the sudoers policy last, and restarts no service. Version 2 can
+replace only the exact reviewed version-1 policy and the two exact predecessor
+user-management helpers. An exact rerun reports every target as already exact.
+If installation fails, it removes exact files created in that run and restores
+recognized predecessor bytes in reverse order; recovery is to correct the
+external package or host condition and run the same command again.
 
 Do not install from a mutable branch checkout or a path writable by
 `msi-access`. Record each installed helper digest before enabling the sudoers
@@ -41,28 +65,34 @@ protected `seal-existing-msi-transport.yml` workflow first proves the exact
 `msi-access` host context, then seals both values to GitHub's fixed organization
 public key. Its artifact contains ciphertext only. An organization administrator
 can install that ciphertext as same-name organization secrets selected only to
-`chat-service`, `push-notification`, and `user-management`; the service
+`chat-service`, `push-notification`, `user-management`, `one-time-password`,
+and `jeeb-gateway`; the service
 workflows then receive transport without widening any application-credential
 ACL. Application credentials remain selected to their existing single
 repository and are not copied into infrastructure.
 
 ## Coordinated migration order
 
-1. All four helpers and workflows pass repository tests. Install the reviewed
+1. All six helpers and workflows pass repository tests. Install the reviewed
    helpers and this exact sudoers policy through the existing administrator
    route. Run the fixed push and user-management preflight commands; chat
    exposes only its separate stage and activate operations.
 2. Stage chat and user-management credentials without restarting. Preserve the
    live `jeeb-5a293` files and drop-ins.
 3. Activate user-management Firebase and verify Auth against
-   `jeeb-development-msi`. Deploy the reviewed user-management build and stage
-   its five SMTP credentials before the SMTP activation.
+   `jeeb-development-msi`. Stage and activate the reviewed gateway verifier
+   runtime, preserving its incumbent dependency-health baseline. Deploy the
+   reviewed user-management build and stage its five SMTP credentials before
+   the SMTP activation.
 4. Release the reviewed development Firestore rules and required composite
    index, then immediately activate chat and require project
    `jeeb-development-msi`, database `(default)`, and Firestore mode.
 5. Activate push and require readiness to report
    `firebase_project_id=jeeb-development-msi` before any exact-device FCM test.
-6. Run the separately authorized application journeys. Never send a topic or
+6. Activate OTP only after its exact provider preflight passes; require the
+   fixed `LegacyAuthToken` identity and selected-unit readiness before the one
+   approved phone verification. Do not reuse the broad voice helper.
+7. Run the separately authorized application journeys. Never send a topic or
    broadcast push. Do not treat an HTTP 200 from the old project as completion.
 
 If a candidate fails, its service-specific helper restores only the preserved

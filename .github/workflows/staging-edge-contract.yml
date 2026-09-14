@@ -9,6 +9,9 @@ on:
       - '.github/workflows/staging-edge-contract.yml'
       - '.github/workflows/jeeb-cloudflare-org-auth-check.yml'
       - 'scripts/verify_cloudflare_org_auth.py'
+      - 'scripts/seal_existing_cloudflare_secret.py'
+      - 'scripts/tests/test_existing_cloudflare_seal.py'
+      - '.github/workflows/seal-existing-cloudflare-secret.yml'
       - 'deploy/msi/jeeb-cms/**'
       - 'deploy/staging/**'
       - 'deploy/staging-192.168.2.20.md'
@@ -22,6 +25,9 @@ on:
       - '.github/workflows/staging-edge-contract.yml'
       - '.github/workflows/jeeb-cloudflare-org-auth-check.yml'
       - 'scripts/verify_cloudflare_org_auth.py'
+      - 'scripts/seal_existing_cloudflare_secret.py'
+      - 'scripts/tests/test_existing_cloudflare_seal.py'
+      - '.github/workflows/seal-existing-cloudflare-secret.yml'
       - 'deploy/msi/jeeb-cms/**'
       - 'deploy/staging/**'
       - 'deploy/staging-192.168.2.20.md'
@@ -55,3 +61,7 @@ jobs:
           deploy/msi/jeeb-cms/tests/run.sh
       - name: Verify root-owned protected ingress fixtures on disposable CI runner
         run: sudo -n /usr/bin/python3 -B -m unittest discover -s deploy/staging/tests -p test_protected_ingress_collector.py -v
+      - name: Verify existing-token encryption in credential-free CI
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-cache-dir 'PyNaCl==1.5.0'
+          python3 -m unittest discover -s scripts/tests -p test_existing_cloudflare_seal.py -v

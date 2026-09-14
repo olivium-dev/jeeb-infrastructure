@@ -16,7 +16,8 @@ INSTALLER_PATH = ROOT / "install-reviewed-runtime-activation.py"
 PACKAGER_PATH = ROOT / "package-reviewed-runtime-activation.py"
 MANIFEST_PATH = ROOT / "reviewed-runtime-activation-manifest.json"
 V1_PACKAGE_PATH = ROOT / "jeeb-msi-runtime-activation-bootstrap.tar"
-PACKAGE_PATH = ROOT / "jeeb-msi-runtime-activation-bootstrap-v2.tar"
+V2_PACKAGE_PATH = ROOT / "jeeb-msi-runtime-activation-bootstrap-v2.tar"
+PACKAGE_PATH = ROOT / "jeeb-msi-runtime-activation-bootstrap-v3.tar"
 STAGE_WORKFLOW = ROOT.parents[2] / ".github/workflows/stage-reviewed-msi-runtime-bootstrap.yml"
 RUNBOOK = ROOT / "README.md"
 
@@ -122,7 +123,7 @@ class RootBootstrapTests(unittest.TestCase):
             with self.assertRaisesRegex(installer.InstallError, "target-drift"):
                 installer._target_state(spec)
 
-    def test_v2_install_uses_the_shared_root_owned_nonblocking_lock(self):
+    def test_v3_install_uses_the_shared_root_owned_nonblocking_lock(self):
         parent = type(
             "Stat", (), {"st_mode": 0o040755, "st_uid": 0, "st_gid": 0}
         )()
@@ -224,8 +225,12 @@ class RootBootstrapTests(unittest.TestCase):
             "07dfdb54cdbb6ad4635e7190848f43f7316516d2e71de9ba6ce23f5963fa8357",
         )
         self.assertEqual(
-            hashlib.sha256(PACKAGE_PATH.read_bytes()).hexdigest(),
+            hashlib.sha256(V2_PACKAGE_PATH.read_bytes()).hexdigest(),
             "1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf",
+        )
+        self.assertEqual(
+            hashlib.sha256(PACKAGE_PATH.read_bytes()).hexdigest(),
+            "f06719d1412ed8d5ac604abde6e402dd969284180c1af447fd75b30d1633d0bc",
         )
         workflow = STAGE_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("REF_PROTECTED: ${{ github.ref_protected }}", workflow)
@@ -234,8 +239,8 @@ class RootBootstrapTests(unittest.TestCase):
         self.assertIn("StrictHostKeyChecking yes", workflow)
         self.assertIn("PubkeyAuthentication no", workflow)
         self.assertGreaterEqual(workflow.count("1002:1002:600:1"), 3)
-        self.assertIn("jeeb-msi-runtime-activation-bootstrap-v2.tar", workflow)
-        self.assertIn("1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf", workflow)
+        self.assertIn("jeeb-msi-runtime-activation-bootstrap-v3.tar", workflow)
+        self.assertIn("f06719d1412ed8d5ac604abde6e402dd969284180c1af447fd75b30d1633d0bc", workflow)
         self.assertIn("/usr/bin/ln '$incoming' '$REMOTE_PACKAGE'", workflow)
         self.assertGreaterEqual(
             workflow.count("test ! -L /home/msi-access/.jeeb-deploy"), 3
@@ -253,16 +258,16 @@ class RootBootstrapTests(unittest.TestCase):
         runbook = RUNBOOK.read_text(encoding="utf-8")
         self.assertIn(
             "source=/home/msi-access/.jeeb-deploy/"
-            "jeeb-msi-runtime-activation-bootstrap-v2-1d9aa98e.tar",
+            "jeeb-msi-runtime-activation-bootstrap-v3-f06719d1.tar",
             runbook,
         )
         self.assertIn(
-            "1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf",
+            "f06719d1412ed8d5ac604abde6e402dd969284180c1af447fd75b30d1633d0bc",
             runbook,
         )
         self.assertIn("1002:1002:600:1", runbook)
         self.assertIn(
-            "dd131899526f496ba24e1b70c7644e3f3674981ac4316f6787d6e2120094ef49",
+            "dfe1877e5db872e1c793170f996cbc2ff19766340a78f1bd93f6e1b08dafe9de",
             runbook,
         )
         self.assertIn(

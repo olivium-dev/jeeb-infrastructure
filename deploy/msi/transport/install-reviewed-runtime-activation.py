@@ -20,7 +20,7 @@ import tempfile
 
 EXPECTED_HOSTNAME = "ouday-GT70-2OC-2OD"
 EXPECTED_TRANSPORT_ACCOUNT = ("msi-access", 1002, 1002)
-PACKAGE_ROOT = Path("/root/jeeb-msi-runtime-activation-bootstrap-v2")
+PACKAGE_ROOT = Path("/root/jeeb-msi-runtime-activation-bootstrap-v3")
 INSTALLER = PACKAGE_ROOT / "install-reviewed-runtime-activation.py"
 VISUDO = Path("/usr/sbin/visudo")
 DEPLOYMENT_LOCK = Path("/run/jeeb-msi-service-deploy.lock")
@@ -51,15 +51,19 @@ FILES = (
     FileSpec(
         "payload/jeeb-msi-push-firebase-admin",
         Path("/usr/local/sbin/jeeb-msi-push-firebase-admin"),
-        "32fb31dcc17616475640ab37cc91fa3a08754939d1cc001edfdf7ebd69d3e205",
+        "088fe0bc221314369653b610ca35bfcde9512cf48fb80bb5e7e4fea118f3c8ef",
         0o755,
+        predecessor_sha256=(
+            "32fb31dcc17616475640ab37cc91fa3a08754939d1cc001edfdf7ebd69d3e205",
+        ),
     ),
     FileSpec(
         "payload/jeeb-msi-user-management-firebase-admin",
         Path("/usr/local/sbin/jeeb-msi-user-management-firebase-admin"),
-        "8468cc9a87aad83df51edc701b1d577f502e7f0a1197b94eff9a72b81c466357",
+        "e69b02523ffc391755429c1f46bda988c7bf0a303e374c1deeaabe3eb796d63f",
         0o755,
         predecessor_sha256=(
+            "8468cc9a87aad83df51edc701b1d577f502e7f0a1197b94eff9a72b81c466357",
             "fdb36357f5561affc8f963a3bb78cf071131a50931d69a94c6697f164ef61497",
         ),
     ),

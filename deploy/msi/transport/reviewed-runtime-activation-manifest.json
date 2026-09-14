@@ -6,10 +6,10 @@
     "uid": 1002,
     "gid": 1002
   },
-  "packageVersion": 2,
-  "predecessorPackageSha256": "07dfdb54cdbb6ad4635e7190848f43f7316516d2e71de9ba6ce23f5963fa8357",
-  "packageRoot": "/root/jeeb-msi-runtime-activation-bootstrap-v2",
-  "installerCommand": "/usr/bin/python3 -I /root/jeeb-msi-runtime-activation-bootstrap-v2/install-reviewed-runtime-activation.py",
+  "packageVersion": 3,
+  "predecessorPackageSha256": "1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf",
+  "packageRoot": "/root/jeeb-msi-runtime-activation-bootstrap-v3",
+  "installerCommand": "/usr/bin/python3 -I /root/jeeb-msi-runtime-activation-bootstrap-v3/install-reviewed-runtime-activation.py",
   "files": [
     {
       "repository": "olivium-dev/chat-service",
@@ -22,22 +22,26 @@
     },
     {
       "repository": "olivium-dev/push-notification",
-      "revision": "14cdcf65cbd61d21a198708b1d7751c57ec7ab33",
+      "revision": "7a68a7af1bb9e0e78f0284b64dc2448f256d0b7b",
       "sourcePath": "scripts/msi_push_firebase_activation.py",
       "packageName": "payload/jeeb-msi-push-firebase-admin",
       "installedPath": "/usr/local/sbin/jeeb-msi-push-firebase-admin",
-      "sha256": "32fb31dcc17616475640ab37cc91fa3a08754939d1cc001edfdf7ebd69d3e205",
-      "mode": "0755"
+      "sha256": "088fe0bc221314369653b610ca35bfcde9512cf48fb80bb5e7e4fea118f3c8ef",
+      "mode": "0755",
+      "predecessorSha256": [
+        "32fb31dcc17616475640ab37cc91fa3a08754939d1cc001edfdf7ebd69d3e205"
+      ]
     },
     {
       "repository": "olivium-dev/user-management",
-      "revision": "0ea0f31c2b0f8661973bb4260d4f2384cbda4363",
+      "revision": "15f370ac44d3a2273682a1d24fa9457db371ae39",
       "sourcePath": "scripts/activate-msi-user-management-firebase.py",
       "packageName": "payload/jeeb-msi-user-management-firebase-admin",
       "installedPath": "/usr/local/sbin/jeeb-msi-user-management-firebase-admin",
-      "sha256": "8468cc9a87aad83df51edc701b1d577f502e7f0a1197b94eff9a72b81c466357",
+      "sha256": "e69b02523ffc391755429c1f46bda988c7bf0a303e374c1deeaabe3eb796d63f",
       "mode": "0755",
       "predecessorSha256": [
+        "8468cc9a87aad83df51edc701b1d577f502e7f0a1197b94eff9a72b81c466357",
         "fdb36357f5561affc8f963a3bb78cf071131a50931d69a94c6697f164ef61497"
       ]
     },

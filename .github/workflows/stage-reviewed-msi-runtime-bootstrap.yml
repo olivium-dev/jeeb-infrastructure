@@ -21,9 +21,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     env:
-      PACKAGE: deploy/msi/transport/jeeb-msi-runtime-activation-bootstrap-v5.tar
-      PACKAGE_SHA256: 85547a24c888421926823d86f77ecdd82e2378777129d6971eb274cbc27d6dd5
-      REMOTE_PACKAGE: /home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-v5-85547a24.tar
+      PACKAGE: deploy/msi/transport/jeeb-msi-runtime-activation-bootstrap-v6.tar
+      PACKAGE_SHA256: e8dc92ff431c467504dcd23f3f299658604389fcf85c569c6e009a3b86e9c2cb
+      REMOTE_PACKAGE: /home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-v6-e8dc92ff.tar
       MSI_SSH_HOST: ssh-msi.olivium.space
       MSI_SSH_USER: msi-access
       CLOUDFLARED_VERSION: 2026.8.2

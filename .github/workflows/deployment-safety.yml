@@ -19,3 +19,5 @@ jobs:
         run: python3 -m unittest discover -s deploy/msi/realtime/tests -p 'test_*.py' -v
       - name: Verify MSI forward-only service deployment scripts
         run: python3 -m unittest discover -s deploy/msi/services/tests -p 'test_*.py' -v
+      - name: Verify MSI runtime activation transport boundary
+        run: python3 -m unittest discover -s deploy/msi/transport/tests -p 'test_*.py' -v

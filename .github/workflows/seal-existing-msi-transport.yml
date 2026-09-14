@@ -1,0 +1,117 @@
+name: Seal existing MSI transport for service repositories
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact reviewed protected main revision
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: existing-msi-transport-migration
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 2
+    steps:
+      - name: Enforce owner, protected main and exact reviewed revision
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]
+          [ "$GITHUB_REPOSITORY" = olivium-dev/jeeb-infrastructure ]
+          [ "$GITHUB_ACTOR" = oudaykhaled ]
+          [ "$GITHUB_TRIGGERING_ACTOR" = oudaykhaled ]
+          [ "$GITHUB_REF" = refs/heads/main ]
+          [ "$GITHUB_REF_PROTECTED" = true ]
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [ "$GITHUB_SHA" = "$EXPECTED_SHA" ]
+
+  seal:
+    needs: guard
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    env:
+      MSI_SSH_HOST: ssh-msi.olivium.space
+      MSI_SSH_USER: msi-access
+      CLOUDFLARED_VERSION: 2026.8.2
+      CLOUDFLARED_SHA256: fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install sealed box support and test without credentials
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-cache-dir 'PyNaCl==1.5.0'
+          python3 -B -m unittest discover -s scripts/tests -p test_existing_msi_transport_seal.py -v
+
+      - name: Install pinned Cloudflare SSH client
+        run: |
+          set -euo pipefail
+          path="$RUNNER_TEMP/cloudflared"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --output "$path" \
+            "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+          printf '%s  %s\n' "$CLOUDFLARED_SHA256" "$path" | sha256sum --check --strict
+          install -d -m 0755 "$RUNNER_TEMP/bin"
+          install -m 0755 "$path" "$RUNNER_TEMP/bin/cloudflared"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Authenticate the fixed transport and seal the same values
+        env:
+          MSI_SSH_PASSWORD: ${{ secrets.MSI_SSH_PASSWORD }}
+          MSI_SSH_KNOWN_HOSTS: ${{ secrets.MSI_SSH_KNOWN_HOSTS }}
+          SOURCE_MSI_SSH_PASSWORD: ${{ secrets.MSI_SSH_PASSWORD }}
+          SOURCE_MSI_SSH_KNOWN_HOSTS: ${{ secrets.MSI_SSH_KNOWN_HOSTS }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          SSH_ASKPASS: ${{ runner.temp }}/msi-askpass
+          SSH_ASKPASS_REQUIRE: force
+          DISPLAY: ':0'
+        run: |
+          set -euo pipefail
+          : "${MSI_SSH_PASSWORD:?MSI_SSH_PASSWORD is required}"
+          : "${MSI_SSH_KNOWN_HOSTS:?MSI_SSH_KNOWN_HOSTS is required}"
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$MSI_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$MSI_SSH_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+          {
+            printf '%s\n' 'Host msi-transport-source'
+            printf '%s\n' "  HostName $MSI_SSH_HOST" "  User $MSI_SSH_USER"
+            printf '%s\n' \
+              '  PreferredAuthentications password' \
+              '  PubkeyAuthentication no' \
+              '  KbdInteractiveAuthentication no' \
+              '  StrictHostKeyChecking yes' \
+              '  UserKnownHostsFile ~/.ssh/known_hosts' \
+              '  ProxyCommand cloudflared access ssh --hostname %h' \
+              '  ConnectTimeout 20' \
+              '  ServerAliveInterval 15' \
+              '  ServerAliveCountMax 2'
+          } > "$HOME/.ssh/config"
+          chmod 0600 "$HOME/.ssh/config"
+          # shellcheck disable=SC2016
+          printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$MSI_SSH_PASSWORD"' > "$SSH_ASKPASS"
+          chmod 0700 "$SSH_ASKPASS"
+          # shellcheck disable=SC2016
+          setsid --wait ssh msi-transport-source \
+            'test "$(/usr/bin/id -un)" = msi-access && test "$(/usr/bin/hostname -s)" = ouday-GT70-2OC-2OD'
+          python3 -B scripts/seal_existing_msi_transport.py
+
+      - name: Retain GitHub-decryptable ciphertext only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: msi-transport-github-sealed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/msi-transport-github-sealed.json
+          if-no-files-found: error
+          retention-days: 1

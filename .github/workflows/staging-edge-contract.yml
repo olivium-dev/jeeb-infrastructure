@@ -12,6 +12,9 @@ on:
       - 'scripts/seal_existing_cloudflare_secret.py'
       - 'scripts/tests/test_existing_cloudflare_seal.py'
       - '.github/workflows/seal-existing-cloudflare-secret.yml'
+      - '.github/workflows/seal-existing-msi-transport.yml'
+      - 'scripts/seal_existing_msi_transport.py'
+      - 'scripts/tests/test_existing_msi_transport_seal.py'
       - 'deploy/msi/jeeb-cms/**'
       - 'deploy/staging/**'
       - 'deploy/staging-192.168.2.20.md'
@@ -28,6 +31,9 @@ on:
       - 'scripts/seal_existing_cloudflare_secret.py'
       - 'scripts/tests/test_existing_cloudflare_seal.py'
       - '.github/workflows/seal-existing-cloudflare-secret.yml'
+      - '.github/workflows/seal-existing-msi-transport.yml'
+      - 'scripts/seal_existing_msi_transport.py'
+      - 'scripts/tests/test_existing_msi_transport_seal.py'
       - 'deploy/msi/jeeb-cms/**'
       - 'deploy/staging/**'
       - 'deploy/staging-192.168.2.20.md'
@@ -65,3 +71,4 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check --no-cache-dir 'PyNaCl==1.5.0'
           python3 -m unittest discover -s scripts/tests -p test_existing_cloudflare_seal.py -v
+          python3 -m unittest discover -s scripts/tests -p test_existing_msi_transport_seal.py -v

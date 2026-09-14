@@ -5,25 +5,23 @@ This directory defines the least-privileged bridge from the existing public
 activators. It does not grant a shell, an interpreter, direct `systemctl`, file
 copy, Docker, sudoers editing, staging access, or production access.
 
-The one-time installation is an MSI administrator action. Install only helpers
-whose service-repository revision and SHA-256 have been reviewed, then validate
-the sudoers file before making it active:
+The one-time installation is an MSI administrator action. Build the
+credential-free archive from the fixed revisions in
+`reviewed-runtime-activation-manifest.json`, place it at
+`/root/jeeb-msi-runtime-activation-bootstrap.tar`, and compare its SHA-256 with
+the reviewed build result. Extract it as root beneath `/root`, then run exactly:
 
 ```bash
-sudo install -o root -g root -m 0755 REVIEWED_CHAT_HELPER \
-  /usr/local/sbin/jeeb-msi-chat-firebase-admin
-sudo install -o root -g root -m 0755 REVIEWED_PUSH_HELPER \
-  /usr/local/sbin/jeeb-msi-push-firebase-admin
-sudo install -o root -g root -m 0755 REVIEWED_USER_MANAGEMENT_FIREBASE_HELPER \
-  /usr/local/sbin/jeeb-msi-user-management-firebase-admin
-sudo install -o root -g root -m 0755 REVIEWED_USER_MANAGEMENT_SMTP_HELPER \
-  /usr/local/sbin/jeeb-msi-user-management-smtp-admin
-sudo visudo -cf deploy/msi/transport/jeeb-msi-runtime-activation.sudoers
-sudo install -o root -g root -m 0440 \
-  deploy/msi/transport/jeeb-msi-runtime-activation.sudoers \
-  /etc/sudoers.d/jeeb-msi-runtime-activation
-sudo visudo -cf /etc/sudoers.d/jeeb-msi-runtime-activation
+/usr/bin/python3 -I /root/jeeb-msi-runtime-activation-bootstrap/install-reviewed-runtime-activation.py
 ```
+
+The installer requires root, the exact MSI hostname and `msi-access` uid/gid,
+root-owned mode-0700 package directories, and exact source SHA-256 values. It
+validates both sudoers copies with `visudo`, refuses to replace any nonmatching
+target, installs the sudoers policy last, and restarts no service. An exact
+rerun reports every target as already exact. If installation fails, it removes
+only exact files created in that run and reports a safe failure; recovery is to
+correct the external package/host condition and run the same command again.
 
 Do not install from a mutable branch checkout or a path writable by
 `msi-access`. Record each installed helper digest before enabling the sudoers

@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "targetHost": "ouday-GT70-2OC-2OD",
+  "transportAccount": {
+    "name": "msi-access",
+    "uid": 1002,
+    "gid": 1002
+  },
+  "packageRoot": "/root/jeeb-msi-runtime-activation-bootstrap",
+  "installerCommand": "/usr/bin/python3 -I /root/jeeb-msi-runtime-activation-bootstrap/install-reviewed-runtime-activation.py",
+  "files": [
+    {
+      "repository": "olivium-dev/chat-service",
+      "revision": "74dcc6efffb3adf0368c8a1750b53e7dc87ae52c",
+      "sourcePath": ".github/scripts/jeeb-chat-firebase-admin.py",
+      "packageName": "payload/jeeb-msi-chat-firebase-admin",
+      "installedPath": "/usr/local/sbin/jeeb-msi-chat-firebase-admin",
+      "sha256": "af54023079743a06ddb14a4024fc693b40289566ecf37f55a4a5078bbe56315a",
+      "mode": "0755"
+    },
+    {
+      "repository": "olivium-dev/push-notification",
+      "revision": "14cdcf65cbd61d21a198708b1d7751c57ec7ab33",
+      "sourcePath": "scripts/msi_push_firebase_activation.py",
+      "packageName": "payload/jeeb-msi-push-firebase-admin",
+      "installedPath": "/usr/local/sbin/jeeb-msi-push-firebase-admin",
+      "sha256": "32fb31dcc17616475640ab37cc91fa3a08754939d1cc001edfdf7ebd69d3e205",
+      "mode": "0755"
+    },
+    {
+      "repository": "olivium-dev/user-management",
+      "revision": "824d084f95029f5e0f8e9ae2231c29011731bb8a",
+      "sourcePath": "scripts/activate-msi-user-management-firebase.py",
+      "packageName": "payload/jeeb-msi-user-management-firebase-admin",
+      "installedPath": "/usr/local/sbin/jeeb-msi-user-management-firebase-admin",
+      "sha256": "fdb36357f5561affc8f963a3bb78cf071131a50931d69a94c6697f164ef61497",
+      "mode": "0755"
+    },
+    {
+      "repository": "olivium-dev/user-management",
+      "revision": "d9c69d8b3b6102665796d3999fbbc7c483021b2c",
+      "sourcePath": "scripts/jeeb-msi-user-management-smtp-admin.py",
+      "packageName": "payload/jeeb-msi-user-management-smtp-admin",
+      "installedPath": "/usr/local/sbin/jeeb-msi-user-management-smtp-admin",
+      "sha256": "763e1f369f015027939cfa3bc16332b57895f8c6bcf720b25a57e2ae18f3e088",
+      "mode": "0755"
+    },
+    {
+      "repository": "olivium-dev/jeeb-infrastructure",
+      "revision": "7108382fbc105c3dd6806a17a99612e5d0fd03f1",
+      "sourcePath": "deploy/msi/transport/jeeb-msi-runtime-activation.sudoers",
+      "packageName": "payload/jeeb-msi-runtime-activation.sudoers",
+      "installedPath": "/etc/sudoers.d/jeeb-msi-runtime-activation",
+      "sha256": "73561496839190b0d4ceb54ef5b0e6ffe64949a380c927d66d3ccc044a338b7d",
+      "mode": "0440"
+    }
+  ]
+}

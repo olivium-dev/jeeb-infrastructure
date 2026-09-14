@@ -38,10 +38,15 @@ organization credential. The workflow connects through
 `ssh-msi.olivium.space` as `msi-access`, using `MSI_SSH_PASSWORD` and
 `MSI_SSH_KNOWN_HOSTS`, a checksum-pinned `cloudflared`, password-only SSH and
 strict host-key checking. It pipes the service credential directly into its
-fixed helper command. The two MSI transport secrets are not currently present
-in the service repositories; an owner must securely provision them before a
-workflow can pass its preflight. Application credentials remain selected to
-their existing single repository and are not copied into infrastructure.
+fixed helper command. The transport values originate in this repository. The
+protected `seal-existing-msi-transport.yml` workflow first proves the exact
+`msi-access` host context, then seals both values to GitHub's fixed organization
+public key. Its artifact contains ciphertext only. An organization administrator
+can install that ciphertext as same-name organization secrets selected only to
+`chat-service`, `push-notification`, and `user-management`; the service
+workflows then receive transport without widening any application-credential
+ACL. Application credentials remain selected to their existing single
+repository and are not copied into infrastructure.
 
 ## Coordinated migration order
 

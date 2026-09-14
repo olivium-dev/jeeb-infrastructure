@@ -6,10 +6,10 @@
     "uid": 1002,
     "gid": 1002
   },
-  "packageVersion": 3,
-  "predecessorPackageSha256": "1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf",
-  "packageRoot": "/root/jeeb-msi-runtime-activation-bootstrap-v3",
-  "installerCommand": "/usr/bin/python3 -I /root/jeeb-msi-runtime-activation-bootstrap-v3/install-reviewed-runtime-activation.py",
+  "packageVersion": 4,
+  "predecessorPackageSha256": "f06719d1412ed8d5ac604abde6e402dd969284180c1af447fd75b30d1633d0bc",
+  "packageRoot": "/root/jeeb-msi-runtime-activation-bootstrap-v4",
+  "installerCommand": "/usr/bin/python3 -I /root/jeeb-msi-runtime-activation-bootstrap-v4/install-reviewed-runtime-activation.py",
   "files": [
     {
       "repository": "olivium-dev/chat-service",
@@ -34,13 +34,14 @@
     },
     {
       "repository": "olivium-dev/user-management",
-      "revision": "15f370ac44d3a2273682a1d24fa9457db371ae39",
+      "revision": "12efde3e00ac1266a3515ba395343d5d58685fc4",
       "sourcePath": "scripts/activate-msi-user-management-firebase.py",
       "packageName": "payload/jeeb-msi-user-management-firebase-admin",
       "installedPath": "/usr/local/sbin/jeeb-msi-user-management-firebase-admin",
-      "sha256": "e69b02523ffc391755429c1f46bda988c7bf0a303e374c1deeaabe3eb796d63f",
+      "sha256": "bdd2e7248bc78b753270d10ea5fc573ddb6294d9046f1c6fc7e733162db4970f",
       "mode": "0755",
       "predecessorSha256": [
+        "e69b02523ffc391755429c1f46bda988c7bf0a303e374c1deeaabe3eb796d63f",
         "8468cc9a87aad83df51edc701b1d577f502e7f0a1197b94eff9a72b81c466357",
         "fdb36357f5561affc8f963a3bb78cf071131a50931d69a94c6697f164ef61497"
       ]

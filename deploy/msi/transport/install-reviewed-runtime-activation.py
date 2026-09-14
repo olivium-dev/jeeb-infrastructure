@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import hashlib
 import json
 import os
@@ -18,9 +20,10 @@ import tempfile
 
 EXPECTED_HOSTNAME = "ouday-GT70-2OC-2OD"
 EXPECTED_TRANSPORT_ACCOUNT = ("msi-access", 1002, 1002)
-PACKAGE_ROOT = Path("/root/jeeb-msi-runtime-activation-bootstrap")
+PACKAGE_ROOT = Path("/root/jeeb-msi-runtime-activation-bootstrap-v2")
 INSTALLER = PACKAGE_ROOT / "install-reviewed-runtime-activation.py"
 VISUDO = Path("/usr/sbin/visudo")
+DEPLOYMENT_LOCK = Path("/run/jeeb-msi-service-deploy.lock")
 MAX_SOURCE_BYTES = 1024 * 1024
 
 
@@ -35,6 +38,7 @@ class FileSpec:
     sha256: str
     mode: int
     validate_sudoers: bool = False
+    predecessor_sha256: tuple[str, ...] = ()
 
 
 FILES = (
@@ -53,21 +57,42 @@ FILES = (
     FileSpec(
         "payload/jeeb-msi-user-management-firebase-admin",
         Path("/usr/local/sbin/jeeb-msi-user-management-firebase-admin"),
-        "fdb36357f5561affc8f963a3bb78cf071131a50931d69a94c6697f164ef61497",
+        "8468cc9a87aad83df51edc701b1d577f502e7f0a1197b94eff9a72b81c466357",
         0o755,
+        predecessor_sha256=(
+            "fdb36357f5561affc8f963a3bb78cf071131a50931d69a94c6697f164ef61497",
+        ),
     ),
     FileSpec(
         "payload/jeeb-msi-user-management-smtp-admin",
         Path("/usr/local/sbin/jeeb-msi-user-management-smtp-admin"),
-        "763e1f369f015027939cfa3bc16332b57895f8c6bcf720b25a57e2ae18f3e088",
+        "4e062041680facb2d5c0d6c478e2db0cfe50b6502650f3659316e8be2320fef2",
+        0o755,
+        predecessor_sha256=(
+            "763e1f369f015027939cfa3bc16332b57895f8c6bcf720b25a57e2ae18f3e088",
+        ),
+    ),
+    FileSpec(
+        "payload/jeeb-msi-otp-twilio-admin",
+        Path("/usr/local/sbin/jeeb-msi-otp-twilio-admin"),
+        "0cc8003c7ced0badbf6858cc43888c116b8c09b93d8b2dc37554414a49e60735",
+        0o755,
+    ),
+    FileSpec(
+        "payload/jeeb-msi-gateway-firebase-diagnostics-admin",
+        Path("/usr/local/sbin/jeeb-msi-gateway-firebase-diagnostics-admin"),
+        "8095616b956bb5c455c0b44f018612a79a6fd2570025e7c1bc7ee8d5dfe04438",
         0o755,
     ),
     FileSpec(
         "payload/jeeb-msi-runtime-activation.sudoers",
         Path("/etc/sudoers.d/jeeb-msi-runtime-activation"),
-        "73561496839190b0d4ceb54ef5b0e6ffe64949a380c927d66d3ccc044a338b7d",
+        "dd8ceed91afaf154a2e3766692b407a9d28dab35cdcbc4429cca98d851ad4189",
         0o440,
         validate_sudoers=True,
+        predecessor_sha256=(
+            "73561496839190b0d4ceb54ef5b0e6ffe64949a380c927d66d3ccc044a338b7d",
+        ),
     ),
 )
 
@@ -129,8 +154,12 @@ def _target_state(spec: FileSpec) -> str:
         data = _read_exact(spec.destination, uid=0, gid=0, mode=spec.mode)
     except FileNotFoundError:
         return "absent"
-    require(hashlib.sha256(data).hexdigest() == spec.sha256, "target-drift")
-    return "exact"
+    digest = hashlib.sha256(data).hexdigest()
+    if digest == spec.sha256:
+        return "exact"
+    if digest in spec.predecessor_sha256:
+        return "predecessor"
+    raise InstallError("target-drift")
 
 
 def _fsync_directory(path: Path) -> None:
@@ -141,12 +170,11 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _install_absent(spec: FileSpec, data: bytes) -> None:
+def _prepared_temporary(spec: FileSpec, data: bytes) -> Path:
     parent = spec.destination.parent
     prefix = f".{spec.destination.name}.bootstrap-"
     descriptor, temporary_name = tempfile.mkstemp(prefix=prefix, dir=parent)
     temporary = Path(temporary_name)
-    linked = False
     try:
         os.fchmod(descriptor, spec.mode)
         os.fchown(descriptor, 0, 0)
@@ -158,6 +186,20 @@ def _install_absent(spec: FileSpec, data: bytes) -> None:
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = -1
+        return temporary
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary.exists() and not temporary.is_symlink():
+            temporary.unlink()
+        raise
+
+
+def _install_absent(spec: FileSpec, data: bytes) -> None:
+    parent = spec.destination.parent
+    temporary = _prepared_temporary(spec, data)
+    linked = False
+    try:
         # Hard-link creation is the portable no-replace operation used here.
         os.link(temporary, spec.destination, follow_symlinks=False)
         linked = True
@@ -172,8 +214,46 @@ def _install_absent(spec: FileSpec, data: bytes) -> None:
                 raise InstallError("single-file-rollback-incomplete") from rollback_error
         raise
     finally:
-        if descriptor >= 0:
-            os.close(descriptor)
+        if temporary.exists() and not temporary.is_symlink():
+            temporary.unlink()
+
+
+def _restore_predecessor(spec: FileSpec, previous: bytes) -> None:
+    require(_target_state(spec) == "exact", "rollback-upgrade-target-drift")
+    require(hashlib.sha256(previous).hexdigest() in spec.predecessor_sha256,
+            "rollback-predecessor-digest")
+    temporary = _prepared_temporary(spec, previous)
+    try:
+        os.replace(temporary, spec.destination)
+        _fsync_directory(spec.destination.parent)
+        require(_target_state(spec) == "predecessor", "rollback-upgrade-verification")
+    finally:
+        if temporary.exists() and not temporary.is_symlink():
+            temporary.unlink()
+
+
+def _replace_predecessor(spec: FileSpec, data: bytes) -> bytes:
+    previous = _read_exact(spec.destination, uid=0, gid=0, mode=spec.mode)
+    require(hashlib.sha256(previous).hexdigest() in spec.predecessor_sha256,
+            "upgrade-predecessor-digest")
+    require(_target_state(spec) == "predecessor", "upgrade-predecessor-drift")
+    temporary = _prepared_temporary(spec, data)
+    replaced = False
+    try:
+        require(_target_state(spec) == "predecessor", "upgrade-predecessor-drift")
+        os.replace(temporary, spec.destination)
+        replaced = True
+        _fsync_directory(spec.destination.parent)
+        require(_target_state(spec) == "exact", "upgrade-verification")
+        return previous
+    except BaseException:
+        if replaced:
+            try:
+                _restore_predecessor(spec, previous)
+            except BaseException as rollback_error:
+                raise InstallError("single-file-upgrade-rollback-incomplete") from rollback_error
+        raise
+    finally:
         if temporary.exists() and not temporary.is_symlink():
             temporary.unlink()
 
@@ -193,6 +273,36 @@ def _visudo(path: Path) -> None:
         check=False,
     )
     require(result.returncode == 0, "sudoers-invalid")
+
+
+@contextmanager
+def operation_lock():
+    _directory(DEPLOYMENT_LOCK.parent)
+    descriptor = os.open(
+        DEPLOYMENT_LOCK,
+        os.O_RDWR
+        | os.O_CREAT
+        | os.O_NONBLOCK
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0),
+        0o600,
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        require(
+            stat.S_ISREG(metadata.st_mode)
+            and metadata.st_nlink == 1
+            and (metadata.st_uid, metadata.st_gid, stat.S_IMODE(metadata.st_mode))
+            == (0, 0, 0o600),
+            "deployment-lock-metadata",
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise InstallError("deployment-lock-busy") from error
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def install(
@@ -223,24 +333,32 @@ def install(
         if spec.validate_sudoers:
             _visudo(package_root / spec.package_name)
 
-    created: list[FileSpec] = []
+    mutations: list[tuple[str, FileSpec, bytes | None]] = []
     try:
         # The sudoers file is declared last and therefore cannot expose a helper
         # command until every reviewed helper has been installed and verified.
         for spec in specs:
             if states[spec] == "exact":
                 continue
-            _install_absent(spec, payload[spec])
-            created.append(spec)
+            if states[spec] == "predecessor":
+                previous = _replace_predecessor(spec, payload[spec])
+                mutations.append(("upgraded", spec, previous))
+            else:
+                _install_absent(spec, payload[spec])
+                mutations.append(("created", spec, None))
         for spec in specs:
             require(_target_state(spec) == "exact", "final-verification")
             if spec.validate_sudoers:
                 _visudo(spec.destination)
     except BaseException as install_error:
         rollback_errors: list[str] = []
-        for spec in reversed(created):
+        for action, spec, previous in reversed(mutations):
             try:
-                _remove_created(spec)
+                if action == "created":
+                    _remove_created(spec)
+                else:
+                    require(previous is not None, "rollback-predecessor-missing")
+                    _restore_predecessor(spec, previous)
             except BaseException:
                 rollback_errors.append(spec.destination.name)
         if rollback_errors:
@@ -250,10 +368,11 @@ def install(
     return {
         "status": "installed",
         "host": EXPECTED_HOSTNAME,
-        "created": len(created),
-        "alreadyExact": len(specs) - len(created),
+        "created": sum(action == "created" for action, _, _ in mutations),
+        "upgraded": sum(action == "upgraded" for action, _, _ in mutations),
+        "alreadyExact": len(specs) - len(mutations),
         "helperCount": len(specs) - 1,
-        "sudoCommandCount": 9,
+        "sudoCommandCount": 14,
         "serviceRestarts": 0,
         "containsCredentials": False,
     }
@@ -264,7 +383,8 @@ def main() -> int:
         print("msi-runtime-bootstrap:unexpected-arguments", file=sys.stderr)
         return 2
     try:
-        result = install()
+        with operation_lock():
+            result = install()
     except (InstallError, OSError, KeyError, subprocess.SubprocessError):
         print("msi-runtime-bootstrap:failed-safe", file=sys.stderr)
         return 2

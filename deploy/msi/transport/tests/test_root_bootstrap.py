@@ -15,8 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 INSTALLER_PATH = ROOT / "install-reviewed-runtime-activation.py"
 PACKAGER_PATH = ROOT / "package-reviewed-runtime-activation.py"
 MANIFEST_PATH = ROOT / "reviewed-runtime-activation-manifest.json"
-PACKAGE_PATH = ROOT / "jeeb-msi-runtime-activation-bootstrap.tar"
+V1_PACKAGE_PATH = ROOT / "jeeb-msi-runtime-activation-bootstrap.tar"
+PACKAGE_PATH = ROOT / "jeeb-msi-runtime-activation-bootstrap-v2.tar"
 STAGE_WORKFLOW = ROOT.parents[2] / ".github/workflows/stage-reviewed-msi-runtime-bootstrap.yml"
+RUNBOOK = ROOT / "README.md"
 
 
 def load(name: str, path: Path):
@@ -51,8 +53,14 @@ class RootBootstrapTests(unittest.TestCase):
              manifest["transportAccount"]["gid"]),
             installer.EXPECTED_TRANSPORT_ACCOUNT,
         )
-        self.assertEqual(len(installer.FILES), 5)
+        self.assertEqual(len(installer.FILES), 7)
         self.assertTrue(installer.FILES[-1].validate_sudoers)
+        self.assertEqual(len(installer.FILES), len(manifest["files"]))
+        for spec, item in zip(installer.FILES, manifest["files"]):
+            self.assertEqual(
+                spec.predecessor_sha256,
+                tuple(item.get("predecessorSha256", ())),
+            )
 
     def test_every_source_revision_and_digest_is_fixed(self):
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -97,11 +105,89 @@ class RootBootstrapTests(unittest.TestCase):
                 )
         self.assertEqual(events, ["check:a", "check:b"])
 
+    def test_only_reviewed_v1_policy_is_an_upgrade_predecessor(self):
+        old = b"reviewed v1 policy\n"
+        new = b"reviewed v2 policy\n"
+        spec = installer.FileSpec(
+            "payload/policy",
+            Path("/safe/policy"),
+            hashlib.sha256(new).hexdigest(),
+            0o440,
+            True,
+            (hashlib.sha256(old).hexdigest(),),
+        )
+        with patch.object(installer, "_read_exact", return_value=old):
+            self.assertEqual(installer._target_state(spec), "predecessor")
+        with patch.object(installer, "_read_exact", return_value=b"unexpected\n"):
+            with self.assertRaisesRegex(installer.InstallError, "target-drift"):
+                installer._target_state(spec)
+
+    def test_v2_install_uses_the_shared_root_owned_nonblocking_lock(self):
+        parent = type(
+            "Stat", (), {"st_mode": 0o040755, "st_uid": 0, "st_gid": 0}
+        )()
+        lock = type(
+            "Stat",
+            (),
+            {"st_mode": 0o100600, "st_uid": 0, "st_gid": 0, "st_nlink": 1},
+        )()
+        with patch.object(installer, "_directory"), \
+                patch.object(installer.os, "open", return_value=73) as opened, \
+                patch.object(installer.os, "fstat", return_value=lock), \
+                patch.object(installer.fcntl, "flock") as flocked, \
+                patch.object(installer.os, "close") as closed:
+            with installer.operation_lock():
+                pass
+        expected_flags = (
+            os.O_RDWR | os.O_CREAT | os.O_NONBLOCK
+            | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        )
+        opened.assert_called_once_with(installer.DEPLOYMENT_LOCK, expected_flags, 0o600)
+        flocked.assert_called_once_with(73, installer.fcntl.LOCK_EX | installer.fcntl.LOCK_NB)
+        closed.assert_called_once_with(73)
+
+    def test_later_failure_rolls_back_policy_upgrade_then_created_helper(self):
+        helper = installer.FileSpec("payload/helper", Path("/safe/helper"), "a" * 64, 0o755)
+        policy = installer.FileSpec(
+            "payload/policy", Path("/safe/policy"), "b" * 64, 0o440, True,
+            ("c" * 64,),
+        )
+        events: list[str] = []
+        states = iter(("absent", "predecessor", "exact", "exact"))
+
+        def final_state(spec):
+            state = next(states)
+            if state == "exact" and spec is policy:
+                raise installer.InstallError("final-verification")
+            return state
+
+        with patch.object(installer.os, "geteuid", return_value=0), \
+                patch.object(installer, "_directory"), \
+                patch.object(installer, "_source_bytes", return_value=b"x"), \
+                patch.object(installer, "_target_state", side_effect=final_state), \
+                patch.object(installer, "_visudo"), \
+                patch.object(installer, "_install_absent",
+                             side_effect=lambda spec, _data: events.append("create:" + spec.destination.name)), \
+                patch.object(installer, "_replace_predecessor",
+                             side_effect=lambda spec, _data: events.append("upgrade:" + spec.destination.name) or b"old"), \
+                patch.object(installer, "_restore_predecessor",
+                             side_effect=lambda spec, _data: events.append("restore:" + spec.destination.name)), \
+                patch.object(installer, "_remove_created",
+                             side_effect=lambda spec: events.append("remove:" + spec.destination.name)):
+            with self.assertRaisesRegex(installer.InstallError, "install-failed-rolled-back"):
+                installer.install(
+                    package_root=Path("/safe"), specs=(helper, policy), validate_host=False
+                )
+        self.assertEqual(
+            events,
+            ["create:helper", "upgrade:policy", "restore:policy", "remove:helper"],
+        )
+
     def test_package_is_deterministic_and_contains_no_secret_values(self):
         with tempfile.TemporaryDirectory() as temporary:
             temporary_root = Path(temporary)
             source_bytes = {f"source-{index}": f"payload-{index}\n".encode()
-                            for index in range(5)}
+                            for index in range(7)}
             manifest = {
                 "schemaVersion": 1,
                 "files": [
@@ -134,8 +220,12 @@ class RootBootstrapTests(unittest.TestCase):
 
     def test_checked_in_package_and_unprivileged_stage_workflow_are_exact(self):
         self.assertEqual(
-            hashlib.sha256(PACKAGE_PATH.read_bytes()).hexdigest(),
+            hashlib.sha256(V1_PACKAGE_PATH.read_bytes()).hexdigest(),
             "07dfdb54cdbb6ad4635e7190848f43f7316516d2e71de9ba6ce23f5963fa8357",
+        )
+        self.assertEqual(
+            hashlib.sha256(PACKAGE_PATH.read_bytes()).hexdigest(),
+            "1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf",
         )
         workflow = STAGE_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("REF_PROTECTED: ${{ github.ref_protected }}", workflow)
@@ -143,7 +233,9 @@ class RootBootstrapTests(unittest.TestCase):
         self.assertIn("MSI_SSH_USER: msi-access", workflow)
         self.assertIn("StrictHostKeyChecking yes", workflow)
         self.assertIn("PubkeyAuthentication no", workflow)
-        self.assertIn("1002:1002:600", workflow)
+        self.assertGreaterEqual(workflow.count("1002:1002:600:1"), 3)
+        self.assertIn("jeeb-msi-runtime-activation-bootstrap-v2.tar", workflow)
+        self.assertIn("1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf", workflow)
         self.assertIn("/usr/bin/ln '$incoming' '$REMOTE_PACKAGE'", workflow)
         self.assertGreaterEqual(
             workflow.count("test ! -L /home/msi-access/.jeeb-deploy"), 3
@@ -157,6 +249,26 @@ class RootBootstrapTests(unittest.TestCase):
         )
         self.assertNotIn("sudo ", workflow)
         self.assertNotIn("/usr/bin/sudo", workflow)
+
+        runbook = RUNBOOK.read_text(encoding="utf-8")
+        self.assertIn(
+            "source=/home/msi-access/.jeeb-deploy/"
+            "jeeb-msi-runtime-activation-bootstrap-v2-1d9aa98e.tar",
+            runbook,
+        )
+        self.assertIn(
+            "1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf",
+            runbook,
+        )
+        self.assertIn("1002:1002:600:1", runbook)
+        self.assertIn(
+            "dd131899526f496ba24e1b70c7644e3f3674981ac4316f6787d6e2120094ef49",
+            runbook,
+        )
+        self.assertIn(
+            '/usr/bin/python3 -I "$package/install-reviewed-runtime-activation.py"',
+            runbook,
+        )
 
 
 if __name__ == "__main__":

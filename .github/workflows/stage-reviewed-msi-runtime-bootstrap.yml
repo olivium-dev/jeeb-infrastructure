@@ -21,9 +21,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     env:
-      PACKAGE: deploy/msi/transport/jeeb-msi-runtime-activation-bootstrap.tar
-      PACKAGE_SHA256: 07dfdb54cdbb6ad4635e7190848f43f7316516d2e71de9ba6ce23f5963fa8357
-      REMOTE_PACKAGE: /home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-07dfdb54.tar
+      PACKAGE: deploy/msi/transport/jeeb-msi-runtime-activation-bootstrap-v2.tar
+      PACKAGE_SHA256: 1d9aa98e9b2d5bed1f600a8875268d2fa2122f305d93900f93b9e4d4c59da2bf
+      REMOTE_PACKAGE: /home/msi-access/.jeeb-deploy/jeeb-msi-runtime-activation-bootstrap-v2-1d9aa98e.tar
       MSI_SSH_HOST: ssh-msi.olivium.space
       MSI_SSH_USER: msi-access
       CLOUDFLARED_VERSION: 2026.8.2
@@ -120,16 +120,16 @@ jobs:
           }
           trap cleanup EXIT
           state="$(setsid --wait ssh msi-bootstrap-stage \
-            "set -euo pipefail; test -d /home/msi-access/.jeeb-deploy; test ! -L /home/msi-access/.jeeb-deploy; if test ! -e '$REMOTE_PACKAGE' && test ! -L '$REMOTE_PACKAGE'; then printf absent; else test ! -L '$REMOTE_PACKAGE'; test \"\$(/usr/bin/stat -c '%u:%g:%a' '$REMOTE_PACKAGE')\" = 1002:1002:600; test \"\$(/usr/bin/sha256sum '$REMOTE_PACKAGE' | /usr/bin/awk '{print \$1}')\" = '$PACKAGE_SHA256'; printf exact; fi")"
+            "set -euo pipefail; test -d /home/msi-access/.jeeb-deploy; test ! -L /home/msi-access/.jeeb-deploy; if test ! -e '$REMOTE_PACKAGE' && test ! -L '$REMOTE_PACKAGE'; then printf absent; else test ! -L '$REMOTE_PACKAGE'; test \"\$(/usr/bin/stat -c '%u:%g:%a:%h' '$REMOTE_PACKAGE')\" = 1002:1002:600:1; test \"\$(/usr/bin/sha256sum '$REMOTE_PACKAGE' | /usr/bin/awk '{print \$1}')\" = '$PACKAGE_SHA256'; printf exact; fi")"
           if [ "$state" = absent ]; then
             setsid --wait scp -q "$PACKAGE" "msi-bootstrap-stage:$incoming"
             setsid --wait ssh msi-bootstrap-stage \
-              "set -euo pipefail; /usr/bin/chmod 0600 '$incoming'; test \"\$(/usr/bin/stat -c '%u:%g:%a' '$incoming')\" = 1002:1002:600; test \"\$(/usr/bin/sha256sum '$incoming' | /usr/bin/awk '{print \$1}')\" = '$PACKAGE_SHA256'; /usr/bin/ln '$incoming' '$REMOTE_PACKAGE'; /usr/bin/unlink '$incoming'"
+              "set -euo pipefail; /usr/bin/chmod 0600 '$incoming'; test \"\$(/usr/bin/stat -c '%u:%g:%a:%h' '$incoming')\" = 1002:1002:600:1; test \"\$(/usr/bin/sha256sum '$incoming' | /usr/bin/awk '{print \$1}')\" = '$PACKAGE_SHA256'; /usr/bin/ln '$incoming' '$REMOTE_PACKAGE'; /usr/bin/unlink '$incoming'"
           else
             [ "$state" = exact ]
           fi
           setsid --wait ssh msi-bootstrap-stage \
-            "test -d /home/msi-access/.jeeb-deploy && test ! -L /home/msi-access/.jeeb-deploy && test ! -L '$REMOTE_PACKAGE' && test \"\$(/usr/bin/stat -c '%u:%g:%a' '$REMOTE_PACKAGE')\" = 1002:1002:600 && test \"\$(/usr/bin/sha256sum '$REMOTE_PACKAGE' | /usr/bin/awk '{print \$1}')\" = '$PACKAGE_SHA256'"
+            "test -d /home/msi-access/.jeeb-deploy && test ! -L /home/msi-access/.jeeb-deploy && test ! -L '$REMOTE_PACKAGE' && test \"\$(/usr/bin/stat -c '%u:%g:%a:%h' '$REMOTE_PACKAGE')\" = 1002:1002:600:1 && test \"\$(/usr/bin/sha256sum '$REMOTE_PACKAGE' | /usr/bin/awk '{print \$1}')\" = '$PACKAGE_SHA256'"
           trap - EXIT
 
       - name: Publish non-secret stage receipt

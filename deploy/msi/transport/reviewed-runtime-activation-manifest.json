@@ -6,10 +6,10 @@
     "uid": 1002,
     "gid": 1002
   },
-  "packageVersion": 8,
-  "predecessorPackageSha256": "ced9d9a5f559e8e91864479cfc432715f577096f8a2b765de180f0d26d1a003d",
-  "packageRoot": "/root/jeeb-msi-runtime-activation-bootstrap-v8",
-  "installerCommand": "/usr/bin/python3 -I /root/jeeb-msi-runtime-activation-bootstrap-v8/install-reviewed-runtime-activation.py",
+  "packageVersion": 9,
+  "predecessorPackageSha256": "cd23aef3e60eaa23793f108b776352420bbe9858e8460b2334bffdd24d56e1da",
+  "packageRoot": "/root/jeeb-msi-runtime-activation-bootstrap-v9",
+  "installerCommand": "/usr/bin/python3 -I /root/jeeb-msi-runtime-activation-bootstrap-v9/install-reviewed-runtime-activation.py",
   "files": [
     {
       "repository": "olivium-dev/chat-service",
@@ -49,13 +49,14 @@
     },
     {
       "repository": "olivium-dev/user-management",
-      "revision": "89f9b9846690909a629992c4f7e3ee9de44f507d",
+      "revision": "d3dad46e5d7e7d7dea3c70c180732b4722068d08",
       "sourcePath": "scripts/jeeb-msi-user-management-smtp-admin.py",
       "packageName": "payload/jeeb-msi-user-management-smtp-admin",
       "installedPath": "/usr/local/sbin/jeeb-msi-user-management-smtp-admin",
-      "sha256": "f655b65f774b7b3898f43c4a060fc707639a62f98b14993466f5d995e0207a6b",
+      "sha256": "5d79348bbc589d0e2d1bb259c89f75f09249bf038dd2a81ac0120f600ce350aa",
       "mode": "0755",
       "predecessorSha256": [
+        "f655b65f774b7b3898f43c4a060fc707639a62f98b14993466f5d995e0207a6b",
         "0daff85599339e4f532a84433848bffa76c3bea5be2706f6a59169a81b198e3e",
         "cb08fcfc9f1fd18d4bb676f56904a2b0538c087a4c3078195926316c1d802b55",
         "4e062041680facb2d5c0d6c478e2db0cfe50b6502650f3659316e8be2320fef2",

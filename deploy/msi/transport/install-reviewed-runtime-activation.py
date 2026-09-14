@@ -20,7 +20,7 @@ import tempfile
 
 EXPECTED_HOSTNAME = "ouday-GT70-2OC-2OD"
 EXPECTED_TRANSPORT_ACCOUNT = ("msi-access", 1002, 1002)
-PACKAGE_ROOT = Path("/root/jeeb-msi-runtime-activation-bootstrap-v8")
+PACKAGE_ROOT = Path("/root/jeeb-msi-runtime-activation-bootstrap-v9")
 INSTALLER = PACKAGE_ROOT / "install-reviewed-runtime-activation.py"
 VISUDO = Path("/usr/sbin/visudo")
 DEPLOYMENT_LOCK = Path("/run/jeeb-msi-service-deploy.lock")
@@ -72,9 +72,10 @@ FILES = (
     FileSpec(
         "payload/jeeb-msi-user-management-smtp-admin",
         Path("/usr/local/sbin/jeeb-msi-user-management-smtp-admin"),
-        "f655b65f774b7b3898f43c4a060fc707639a62f98b14993466f5d995e0207a6b",
+        "5d79348bbc589d0e2d1bb259c89f75f09249bf038dd2a81ac0120f600ce350aa",
         0o755,
         predecessor_sha256=(
+            "f655b65f774b7b3898f43c4a060fc707639a62f98b14993466f5d995e0207a6b",
             "0daff85599339e4f532a84433848bffa76c3bea5be2706f6a59169a81b198e3e",
             "cb08fcfc9f1fd18d4bb676f56904a2b0538c087a4c3078195926316c1d802b55",
             "4e062041680facb2d5c0d6c478e2db0cfe50b6502650f3659316e8be2320fef2",

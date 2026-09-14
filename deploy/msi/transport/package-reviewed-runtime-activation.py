@@ -12,7 +12,7 @@ import subprocess
 import tarfile
 
 
-ROOT_NAME = "jeeb-msi-runtime-activation-bootstrap-v8"
+ROOT_NAME = "jeeb-msi-runtime-activation-bootstrap-v9"
 HERE = Path(__file__).resolve().parent
 MANIFEST = HERE / "reviewed-runtime-activation-manifest.json"
 INSTALLER = HERE / "install-reviewed-runtime-activation.py"
